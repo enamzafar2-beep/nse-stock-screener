@@ -1,36 +1,6 @@
-
-Continued from
-Build NSE Scanner (3)
-YES
-Good!
-
-Step 12: Press Ctrl + F on your keyboard.
-
-A small search box will appear. Type:
-
-Refresh NSE universe
-
-Does GitHub highlight that phrase in the file? Reply yes or no.
-
-no
-That's okay. It means the phrase is not present in the workflow file currently open.
-
-Let's correct it carefully.
-
-Step 13: Click the pencil icon at the top-right of daily_scan.yml to enter edit mode.
-
-Tell me when you are back in edit mode.
-
-yes
-
-Worked for 9s
-I found the problem. Your GitHub workflow still has the old version. We'll replace it with the correct version now.
-
-Step 14: In the GitHub editor, press Ctrl + A to select all the existing text. Then paste this complete replacement:
-
 name: Daily NSE Stock Scan
 
-"on":
+on:
   schedule:
     - cron: "0 11 * * 1-5"
   workflow_dispatch:
@@ -69,10 +39,3 @@ jobs:
           git add daily_scan_results.csv universe.csv
           git diff --cached --quiet || git commit -m "Update daily NSE scan results and universe"
           git push
-
-
-
-
-
-
-
