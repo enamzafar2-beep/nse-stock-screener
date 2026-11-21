@@ -68,34 +68,34 @@ def benchmark_return():
         if isinstance(hist.columns, pd.MultiIndex):
             hist.columns = hist.columns.get_level_values(0)
         close = _column(hist, "Close").dropna()
-        if len(close) < 64:
+        if len(close) < 127:
             return None
-        return float((close.iloc[-1] / close.iloc[-64] - 1) * 100)
+        return float((close.iloc[-1] / close.iloc[-127] - 1) * 100)
     except Exception:
         return None
 
 
-def inspect_symbol(symbol, min_mcap=1000, min_return=60, min_price=90,
+def inspect_symbol(symbol, min_mcap=1000, min_return=50, min_price=90,
                    min_above_low=1.5, min_turnover=10, use_ema=False,
                    proximity=2, use_peg=False, max_peg=2.0):
     try:
         hist = _download_history(symbol, "1y")
-        if hist is None or len(hist) < 65:
+        if hist is None or len(hist) < 127:
             return None, f"{symbol}: insufficient daily history"
         close = _column(hist, "Close").dropna()
         high = _column(hist, "High").reindex(close.index)
         low = _column(hist, "Low").reindex(close.index)
         volume = _column(hist, "Volume").reindex(close.index).fillna(0)
-        if len(close) < 65:
+        if len(close) < 127:
             return None, f"{symbol}: insufficient daily history"
 
         last = float(close.iloc[-1])
         low_52w = float(low.tail(252).min())
-        ret_3m = float((last / float(close.iloc[-64]) - 1) * 100)
+        ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
         avg_turnover_cr = float((close.tail(30) * volume.tail(30)).mean() / 1e7)
         if last <= min_price or low_52w <= 0 or last / low_52w < min_above_low:
             return None, None
-        if ret_3m <= min_return or avg_turnover_cr < min_turnover:
+        if ret_6m <= min_return or avg_turnover_cr < min_turnover:
             return None, None
 
         ticker = yf.Ticker(f"{symbol}.NS")
@@ -124,7 +124,7 @@ def inspect_symbol(symbol, min_mcap=1000, min_return=60, min_price=90,
             "Symbol": symbol,
             "Price (₹)": last,
             "Market cap (₹ Cr)": market_cap_cr,
-            "3M return (%)": ret_3m,
+            "6M return (%)": ret_6m,
             "52W low (₹)": low_52w,
             "Above 52W low (x)": last / low_52w,
             "30D avg turnover (₹ Cr)": avg_turnover_cr,
@@ -140,7 +140,7 @@ def inspect_symbol(symbol, min_mcap=1000, min_return=60, min_price=90,
         return None, f"{symbol}: {str(exc)[:160]}"
 
 
-def run_scan(symbols, min_mcap=1000, min_return=60, min_price=90,
+def run_scan(symbols, min_mcap=1000, min_return=50, min_price=90,
              min_above_low=1.5, min_turnover=10, min_rs=80,
              strong_sector_only=True, use_ema=False, proximity=2,
              use_peg=False, max_peg=2.0, workers=8):
@@ -163,34 +163,34 @@ def run_scan(symbols, min_mcap=1000, min_return=60, min_price=90,
     if df.empty:
         return df, errors
 
-    # RS score is the percentile rank of each stock's 3-month excess return
+    # RS score is the percentile rank of each stock's 6-month excess return
     # over the Nifty 500 benchmark, among stocks with usable data in this scan.
     nifty500_return = benchmark_return()
-    df["Nifty 500 3M return (%)"] = nifty500_return
+    df["Nifty 500 6M return (%)"] = nifty500_return
     if nifty500_return is None:
         errors.append("Nifty 500 benchmark data unavailable; RS >= 80 cannot be verified, so no results are being passed through.")
         return pd.DataFrame(), errors
     else:
-        df["Excess return vs Nifty 500 (%)"] = df["3M return (%)"] - nifty500_return
+        df["Excess return vs Nifty 500 (%)"] = df["6M return (%)"] - nifty500_return
         df["RS score"] = (df["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100).round(1)
 
-    # Sector strength: median 3-month return for each sector; retain sectors
+    # Sector strength: median 6-month return for each sector; retain sectors
     # that both beat the Nifty 500 and fall in the top 30% of sector medians.
-    sector_perf = df[df["Sector"] != "Unknown"].groupby("Sector")["3M return (%)"].median()
+    sector_perf = df[df["Sector"] != "Unknown"].groupby("Sector")["6M return (%)"].median()
     if not sector_perf.empty:
         strong_names = set(sector_perf[sector_perf >= sector_perf.quantile(0.70)].index)
         strong_names = set(name for name in strong_names if sector_perf[name] > nifty500_return)
-        df["Sector median 3M return (%)"] = df["Sector"].map(sector_perf)
+        df["Sector median 6M return (%)"] = df["Sector"].map(sector_perf)
         df["Strong sector"] = df["Sector"].isin(strong_names)
     else:
-        df["Sector median 3M return (%)"] = None
+        df["Sector median 6M return (%)"] = None
         df["Strong sector"] = False
 
     df = df[df["RS score"] >= min_rs]
     if strong_sector_only:
         df = df[df["Strong sector"]]
     if not df.empty:
-        df = df.sort_values(["RS score", "3M return (%)", "30D avg turnover (₹ Cr)"],
+        df = df.sort_values(["RS score", "6M return (%)", "30D avg turnover (₹ Cr)"],
                             ascending=[False, False, False], na_position="last")
     return df, errors
 
@@ -200,7 +200,7 @@ def save_daily_results(df, symbols, errors):
     scan_date = now.strftime("%Y-%m-%d")
     df = df.copy()
     if df.empty:
-        df = pd.DataFrame(columns=["Symbol", "Price (₹)", "Market cap (₹ Cr)", "3M return (%)",
+        df = pd.DataFrame(columns=["Symbol", "Price (₹)", "Market cap (₹ Cr)", "6M return (%)",
                                    "52W low (₹)", "Above 52W low (x)", "30D avg turnover (₹ Cr)",
                                    "Sector", "PEG", "RS score", "As of"])
     df.insert(0, "Scan date", scan_date)
@@ -231,7 +231,7 @@ st.caption("End-of-day stock screening for swing and positional research. Not a 
 with st.sidebar:
     st.header("Core filters")
     min_mcap = st.number_input("Minimum market cap (₹ crore)", min_value=1, value=1000, step=100)
-    min_return = st.number_input("Minimum 3-month return (%)", min_value=0.0, value=60.0, step=5.0)
+    min_return = st.number_input("Minimum 6-month return (%)", min_value=0.0, value=50.0, step=5.0)
     min_price = st.number_input("Minimum share price (₹)", min_value=1.0, value=90.0, step=5.0)
     min_above_low = st.number_input("Minimum price / 52-week low", min_value=1.0, value=1.5, step=0.1)
     min_turnover = st.number_input("Minimum 30-day average turnover (₹ crore)", min_value=0.0, value=10.0, step=1.0)
@@ -308,10 +308,10 @@ else:
 st.divider()
 st.subheader("4. Filter definitions and data notes")
 st.markdown("""
-- **Relative Strength score:** percentile rank of each stock's 3-month excess return over the Nifty 500 benchmark, across the scanned symbols. The benchmark is Yahoo Finance's `^CRSLDX` series; if benchmark data is unavailable, the RS filter is not applied and scores are blank.
-- **Strong sectors:** sectors whose median 3-month stock return is in the top 30% of available sectors and, when benchmark data is available, exceeds the Nifty 500 return.
+- **Relative Strength score:** percentile rank of each stock's 6-month excess return over the Nifty 500 benchmark, across the scanned symbols. The benchmark is Yahoo Finance's `^CRSLDX` series; if benchmark data is unavailable, the RS filter is not applied and scores are blank.
+- **Strong sectors:** sectors whose median 6-month stock return is in the top 30% of available sectors and, when benchmark data is available, exceeds the Nifty 500 return.
 - **Price and liquidity:** latest EOD close above ₹90 by default; at least 1.5× the 52-week low; 30-day average daily turnover is the mean of close × volume, in ₹ crore.
-- **Market cap and momentum:** market cap above ₹1,000 crore and 3-month return above 60% by default.
+- **Market cap and momentum:** market cap above ₹1,000 crore and 6-month return above 50% by default.
 - **EMA filter:** optional; when enabled, close must be within the selected percentage of EMA 10, 20 or 50.
 - **PEG:** optional; when enabled, only positive PEG values at or below the selected maximum are retained. Missing PEG values are excluded in that mode.
 - All calculations use daily end-of-day data. Intraday screening and the agreed swing/positional backtests are separate future stages.
