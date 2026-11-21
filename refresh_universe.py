@@ -21,9 +21,7 @@ HEADERS = {
 def main():
     session = requests.Session()
     session.headers.update(HEADERS)
-    home = session.get(HOME_URL, timeout=30)
-    home.raise_for_status()
-    time.sleep(1)
+   
     response = session.get(CSV_URL, timeout=60)
     response.raise_for_status()
     if not response.content or b"SYMBOL" not in response.content[:5000].upper():
