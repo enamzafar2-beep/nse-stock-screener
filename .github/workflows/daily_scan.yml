@@ -34,5 +34,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add daily_scan_results.csv
-          git diff --cached --quiet || git commit -m "Update daily NSE scan results"
+          git diff --cached --quiet || git commit -m "Update daily NSE scan results unverse.csv"
           git push
