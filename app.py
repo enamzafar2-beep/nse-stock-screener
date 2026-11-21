@@ -74,6 +74,8 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         low_52w = float(low.tail(252).min())
         ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
         avg_turnover_cr = float((close.tail(30) * volume.tail(30)).mean() / 1e7)
+        latest_volume = int(volume.iloc[-1])
+        avg_volume_30d = int(volume.tail(30).mean())
         if last <= min_price or low_52w <= 0 or last / low_52w < min_above_low:
             return None, None
         if avg_turnover_cr < min_turnover:
@@ -139,6 +141,8 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             "Prior 6M swing advance (%)": prior_advance_pct,
             "52W low (₹)": low_52w,
             "Above 52W low (x)": last / low_52w,
+            "Latest volume (shares)": latest_volume,
+            "30D avg volume (shares)": avg_volume_30d,
             "30D avg turnover (₹ Cr)": avg_turnover_cr,
             "Sector": sector,
             "PEG": peg,
@@ -153,7 +157,7 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         return None, f"{symbol}: {str(exc)[:160]}"
 
 def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
-             min_above_low=1.5, min_turnover=10, min_rs=80,
+             min_above_low=1.5, min_turnover=7, min_rs=80,
              strong_sector_only=True, proximity=2, use_peg=False,
              max_peg=2.0, workers=6):
     rows, errors = [], []
@@ -241,7 +245,7 @@ with st.sidebar:
                                  disabled=(scan_type == "Pullback"))
     min_price = st.number_input("Minimum share price (₹)", min_value=1.0, value=90.0, step=5.0)
     min_above_low = st.number_input("Minimum price / 52-week low", min_value=1.0, value=1.5, step=0.1)
-    min_turnover = st.number_input("Minimum 30-day average turnover (₹ crore)", min_value=0.0, value=10.0, step=1.0)
+    min_turnover = st.number_input("Minimum 30-day average turnover (₹ crore)", min_value=0.0, value=7.0, step=1.0)
     min_rs = st.slider("Minimum Relative Strength score", 0, 100, 80)
     strong_sector_only = st.checkbox("Only strong sectors", value=True)
     st.header("EMA pullback settings")
@@ -322,7 +326,7 @@ st.markdown("""
 - **Pullback labels:** “Near EMA support” means the stock is in the pullback zone. “Pullback turning up” means the latest close is above the previous close and above the day's open. These are screening labels, not confirmed buy signals.
 - **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among stocks that pass the selected scan's initial filters.
 - **Strong sectors:** sectors whose median six-month return is in the top 30% of available sectors and exceeds the benchmark return.
-- **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹10 crore, and market cap above ₹1,000 crore by default.
+- **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
 - All calculations use daily end-of-day data. Intraday screening and backtesting remain future stages.
 **Data caution:** Yahoo Finance via yfinance is unofficial and may be delayed, incomplete, rate-limited or inaccurate. Market cap, sector and PEG can be missing or stale. Verify candidates with NSE and your broker. This is a research screener, not investment advice.
