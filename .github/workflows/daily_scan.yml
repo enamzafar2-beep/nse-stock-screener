@@ -1,3 +1,33 @@
+
+Continued from
+Build NSE Scanner (3)
+YES
+Good!
+
+Step 12: Press Ctrl + F on your keyboard.
+
+A small search box will appear. Type:
+
+Refresh NSE universe
+
+Does GitHub highlight that phrase in the file? Reply yes or no.
+
+no
+That's okay. It means the phrase is not present in the workflow file currently open.
+
+Let's correct it carefully.
+
+Step 13: Click the pencil icon at the top-right of daily_scan.yml to enter edit mode.
+
+Tell me when you are back in edit mode.
+
+yes
+
+Worked for 9s
+I found the problem. Your GitHub workflow still has the old version. We'll replace it with the correct version now.
+
+Step 14: In the GitHub editor, press Ctrl + A to select all the existing text. Then paste this complete replacement:
+
 name: Daily NSE Stock Scan
 
 "on":
@@ -11,26 +41,38 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Refresh official NSE main-board stock universe
+
+      - name: Refresh NSE universe
         run: python refresh_universe.py
+
       - name: Run daily scanner
         run: python app.py
         env:
           NSE_DAILY_SCAN: "1"
-      - name: Save daily results and refreshed universe
+
+      - name: Save daily results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add daily_scan_results.csv universe.csv
           git diff --cached --quiet || git commit -m "Update daily NSE scan results and universe"
           git push
+
+
+
+
+
+
+
