@@ -1,8 +1,10 @@
 import os
+from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
+import requests
 import streamlit as st
 import yfinance as yf
 
@@ -11,13 +13,47 @@ HISTORY_FILE = ROOT / "daily_scan_results.csv"
 UNIVERSE_FILE = ROOT / "universe.csv"
 IST = "Asia/Kolkata"
 
-def load_symbols():
+NSE_EQUITY_CSV = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
+
+
+def fetch_nse_symbols():
+    """Fetch the current main-board equity symbol list from NSE's official CSV."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Accept": "text/csv,*/*",
+        "Referer": "https://www.nseindia.com/",
+    }
+    response = requests.get(NSE_EQUITY_CSV, headers=headers, timeout=30)
+    response.raise_for_status()
+    frame = pd.read_csv(BytesIO(response.content), encoding="latin1")
+    frame.columns = [str(c).replace("\ufeff", "").strip().upper() for c in frame.columns]
+    symbol_col = next((c for c in frame.columns if c in {"SYMBOL", "SYMBOL NAME"}), None)
+    if not symbol_col:
+        raise ValueError("NSE equity CSV did not contain a SYMBOL column")
+    symbols = (frame[symbol_col].dropna().astype(str).str.strip().str.upper()
+               .str.replace(r"[^A-Z0-9&_-]", "", regex=True))
+    symbols = sorted(set(x for x in symbols if x and x not in {"NAN", "NULL"}))
+    if len(symbols) < 500:
+        raise ValueError(f"NSE returned only {len(symbols)} symbols; refusing to replace the existing universe")
+    UNIVERSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"Symbol": symbols}).to_csv(UNIVERSE_FILE, index=False)
+    return symbols
+
+
+def load_symbols(refresh=False):
+    if refresh:
+        try:
+            return fetch_nse_symbols()
+        except Exception as exc:
+            print(f"WARNING: Could not refresh NSE symbol list: {exc}")
     if UNIVERSE_FILE.exists():
         try:
             frame = pd.read_csv(UNIVERSE_FILE)
             col = next((c for c in frame.columns if c.lower().strip() == "symbol"), None)
             if col:
-                return sorted(set(frame[col].dropna().astype(str).str.upper().str.replace(".NS", "", regex=False).str.strip()))
+                symbols = sorted(set(frame[col].dropna().astype(str).str.upper().str.replace(".NS", "", regex=False).str.strip()))
+                if symbols:
+                    return symbols
         except Exception:
             pass
     return ["RELIANCE","HDFCBANK","ICICIBANK","SBIN","INFY","TCS","LT","BEL","HAL","MAZDOCK","CDSL","MCX"]
@@ -87,7 +123,7 @@ def inspect_symbol(symbol, min_mcap=1000, min_return=60, proximity=2):
     except Exception as exc:
         return None, f"{symbol}: {str(exc)[:160]}"
 
-def run_scan(symbols, min_mcap=1000, min_return=60, proximity=2, workers=5):
+def run_scan(symbols, min_mcap=1000, min_return=60, proximity=2, workers=8):
     rows, errors = [], []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(inspect_symbol,s,min_mcap,min_return,proximity):s for s in symbols}
@@ -124,7 +160,7 @@ def save_daily_results(df, symbols, errors):
 
 # GitHub Actions scheduled mode: scan the committed universe and persist results.
 if os.getenv("NSE_DAILY_SCAN") == "1":
-    symbols = load_symbols()
+    symbols = load_symbols(refresh=True)
     results, errors = run_scan(symbols)
     save_daily_results(results,symbols,errors)
     print(f"Daily scan completed: {len(symbols)} symbols, {len(results)} matches, {len(errors)} errors")
@@ -139,13 +175,13 @@ with st.sidebar:
     min_mcap=st.number_input("Minimum market cap (₹ crore)",min_value=1,value=1000,step=100)
     min_return=st.number_input("Minimum 3-month return (%)",min_value=0.0,value=60.0,step=5.0)
     proximity=st.number_input("EMA proximity (%)",min_value=.1,max_value=10.0,value=2.0,step=.5)
-    workers=st.slider("Concurrent requests",1,12,5)
+    workers=st.slider("Concurrent requests",1,12,8)
 
 st.subheader("1. Choose NSE universe")
-st.caption("Upload a CSV with a Symbol column or paste symbols. Scheduled scans use universe.csv in the GitHub repository.")
+st.caption("The scheduled scanner refreshes the official NSE main-board equity list automatically. You can also refresh it below. SME securities are listed separately by NSE and are not included in this main-board universe.")
 uploaded=st.file_uploader("Upload NSE symbols CSV",type=["csv"])
 default_symbols=",".join(load_symbols())
-symbols_text=st.text_area("Or paste comma/newline-separated NSE symbols",value=default_symbols,height=90)
+symbols_text=st.text_area("Or paste comma/newline-separated NSE symbols",value=st.session_state.get("nse_symbols_text", default_symbols),height=90)
 symbols=[]
 if uploaded is not None:
     try:
@@ -156,6 +192,18 @@ if uploaded is not None:
     except Exception as exc: st.error(f"Could not read CSV: {exc}")
 if not symbols:
     symbols=[s.strip().upper().replace(".NS","") for s in symbols_text.replace("\n",",").split(",") if s.strip()]
+symbols=list(dict.fromkeys(symbols))
+if st.button("↻ Refresh official NSE stock list", use_container_width=True):
+    with st.spinner("Downloading the latest NSE equity list..."):
+        try:
+            refreshed = fetch_nse_symbols()
+            st.session_state["nse_symbols_text"] = ",".join(refreshed)
+            st.success(f"Loaded {len(refreshed)} NSE equity symbols.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not refresh the NSE list: {exc}. Your existing list has been kept.")
+if "nse_symbols_text" in st.session_state and uploaded is None:
+    symbols = [x.strip().upper().replace(".NS", "") for x in st.session_state["nse_symbols_text"].replace("\n", ",").split(",") if x.strip()]
 symbols=list(dict.fromkeys(symbols))
 st.write(f"**{len(symbols)} symbols loaded**")
 
@@ -201,6 +249,7 @@ else:
 st.divider()
 st.subheader("3. How the scanner works")
 st.markdown("""
+- Universe: current NSE main-board equity symbols, refreshed from NSE official securities CSV; SME securities are separate.
 - Market cap strictly above the selected threshold (default ₹1,000 crore).
 - 3-month return above 60%, approximately 63 trading sessions.
 - Latest close within the selected percentage of EMA 10, EMA 20 or EMA 50.

@@ -18,3 +18,7 @@ The scheduled scan uses the symbols in `universe.csv` and the default thresholds
 
 ## Data limitations
 Yahoo Finance through yfinance is unofficial; data may be delayed, incomplete, throttled or inaccurate. This is a research screener, not investment advice.
+
+
+## Full NSE universe
+The daily GitHub Actions scan refreshes `universe.csv` from NSE official main-board equity securities (`EQUITY_L.csv`) before scanning. SME securities are published separately by NSE and are not included. Market-cap, 3-month momentum, EMA proximity, reversal, volume, entry and target filters remain unchanged. Data retrieval for this broad universe uses Yahoo Finance through yfinance and may be incomplete or rate-limited; check the scan error count.
