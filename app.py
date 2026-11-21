@@ -59,7 +59,8 @@ def benchmark_return():
         return None
 
 def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
-                   min_above_low, min_turnover, proximity, use_peg, max_peg):
+                   min_above_low, min_turnover, proximity, use_peg, max_peg,
+                   require_volume_expansion, min_volume_ratio):
     try:
         hist = download_history(symbol)
         if hist is None or len(hist) < 127:
@@ -76,6 +77,10 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         avg_turnover_cr = float((close.tail(30) * volume.tail(30)).mean() / 1e7)
         latest_volume = int(volume.iloc[-1])
         avg_volume_30d = int(volume.tail(30).mean())
+        prior_30d_avg_volume = float(volume.iloc[-31:-1].mean())
+        volume_ratio = (latest_volume / prior_30d_avg_volume) if prior_30d_avg_volume > 0 else 0.0
+        if require_volume_expansion and volume_ratio * 100 < min_volume_ratio:
+            return None, None
         if last <= min_price or low_52w <= 0 or last / low_52w < min_above_low:
             return None, None
         if avg_turnover_cr < min_turnover:
@@ -143,6 +148,7 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             "Above 52W low (x)": last / low_52w,
             "Latest volume (shares)": latest_volume,
             "30D avg volume (shares)": avg_volume_30d,
+            "Today's volume vs prior 30D avg (%)": round(volume_ratio * 100, 1),
             "30D avg turnover (₹ Cr)": avg_turnover_cr,
             "Sector": sector,
             "PEG": peg,
@@ -159,13 +165,15 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
 def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
              min_above_low=1.5, min_turnover=7, min_rs=80,
              strong_sector_only=True, proximity=2, use_peg=False,
-             max_peg=2.0, workers=6):
+             max_peg=2.0, workers=6, require_volume_expansion=False,
+             min_volume_ratio=150.0):
     rows, errors = [], []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(inspect_symbol, symbol, scan_type, min_mcap, min_return,
                         min_price, min_above_low, min_turnover, proximity,
-                        use_peg, max_peg): symbol
+                        use_peg, max_peg, require_volume_expansion,
+                        min_volume_ratio): symbol
             for symbol in symbols
         }
         for future in as_completed(futures):
@@ -253,6 +261,16 @@ with st.sidebar:
                                 value=2.0, step=0.5)
     use_peg = st.checkbox("Enable PEG filter (missing PEG values excluded)", value=False)
     max_peg = st.number_input("Maximum PEG ratio", min_value=0.1, value=2.0, step=0.1)
+    st.header("Volume expansion")
+    require_volume_expansion = st.checkbox(
+        "Require today's volume expansion (optional)", value=False,
+        help="When enabled, today's volume must be at least the selected multiple of the previous 30 trading days' average volume."
+    )
+    min_volume_ratio = st.number_input(
+        "Minimum today's volume (% of prior 30-day average)", min_value=100.0,
+        max_value=500.0, value=150.0, step=10.0,
+        disabled=not require_volume_expansion
+    )
     workers = st.slider("Concurrent requests", 1, 12, 6)
 
 st.subheader("1. NSE universe")
@@ -269,7 +287,7 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
             results, errors = run_scan(
                 symbols, scan_type, min_mcap, min_return, min_price, min_above_low,
                 min_turnover, min_rs, strong_sector_only, proximity, use_peg,
-                max_peg, workers
+                max_peg, workers, require_volume_expansion, min_volume_ratio
             )
             save_daily_results(results, symbols, errors)
             st.session_state["latest_results"] = results
@@ -328,6 +346,7 @@ st.markdown("""
 - **Strong sectors:** sectors whose median six-month return is in the top 30% of available sectors and exceeds the benchmark return.
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
+- **Volume expansion:** optional; when enabled, latest day's volume must be at least the chosen percentage (150% by default) of the preceding 30 trading days' average volume, excluding the latest day from the comparison.
 - All calculations use daily end-of-day data. Intraday screening and backtesting remain future stages.
 **Data caution:** Yahoo Finance via yfinance is unofficial and may be delayed, incomplete, rate-limited or inaccurate. Market cap, sector and PEG can be missing or stale. Verify candidates with NSE and your broker. This is a research screener, not investment advice.
 """)
