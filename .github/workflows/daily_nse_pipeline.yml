@@ -9,6 +9,8 @@ on:
       - "app.py"
       - "build_nse_history.py"
       - "refresh_universe.py"
+      - "industry_classification.csv"
+      - "manual_industry_overrides.csv"
       - ".github/workflows/daily_nse_pipeline.yml"
   # GitHub schedules run only from the repository's default branch.
   # This schedule becomes active after an explicitly approved deployment.
