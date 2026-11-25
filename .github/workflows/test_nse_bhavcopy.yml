@@ -49,6 +49,9 @@ jobs:
           for attempt in 1 2 3; do
             echo "Synchronizing with test branch (attempt $attempt)..."
             git fetch origin test/nse-bhavcopy-download
+            # The database build modifies a tracked file in the checkout.
+            # Preserve it in /tmp, then discard the workspace copy before switching.
+            git reset --hard origin/test/nse-bhavcopy-download
             git checkout -B save-nse-database origin/test/nse-bhavcopy-download
             cp /tmp/nse_daily_history.csv.gz nse_daily_history.csv.gz
             git add nse_daily_history.csv.gz
