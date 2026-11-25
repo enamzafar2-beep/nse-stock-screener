@@ -6,6 +6,10 @@ on:
     paths-ignore:
       - "nse_daily_history.csv.gz"
 
+concurrency:
+  group: nse-bhavcopy-test-branch
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -15,6 +19,8 @@ jobs:
     steps:
       - name: Check out test branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -29,14 +35,37 @@ jobs:
         run: python build_nse_history.py
       - name: Save database on test branch
         run: |
+          set -e
+          cp nse_daily_history.csv.gz /tmp/nse_daily_history.csv.gz
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add nse_daily_history.csv.gz
-          if git diff --cached --quiet; then
-            echo "No database changes to commit."
-          else
-            git commit -m "Build NSE history database"
-            git push origin HEAD:test/nse-bhavcopy-download
+
+          saved=0
+          for attempt in 1 2 3; do
+            echo "Synchronizing with test branch (attempt $attempt)..."
+            git fetch origin test/nse-bhavcopy-download
+            git checkout -B save-nse-database origin/test/nse-bhavcopy-download
+            cp /tmp/nse_daily_history.csv.gz nse_daily_history.csv.gz
+            git add nse_daily_history.csv.gz
+
+            if git diff --cached --quiet; then
+              echo "The same database is already saved on the test branch."
+              saved=1
+              break
+            fi
+
+            git commit -m "Save verified NSE historical database"
+            if git push origin HEAD:test/nse-bhavcopy-download; then
+              saved=1
+              echo "Database successfully saved on test branch."
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$saved" -ne 1 ]; then
+            echo "Could not save database after three synchronization attempts."
+            exit 1
           fi
       - name: Save test output
         if: always()
