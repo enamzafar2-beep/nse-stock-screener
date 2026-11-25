@@ -148,6 +148,53 @@ def build_universe_strength_context(symbols, classification_level, nifty500_retu
     return rs_map, group_medians.to_dict(), strong_groups
 
 
+
+def build_sector_strength_context(symbols, nifty500_return):
+    """
+    Sector RS uses every NSE EQ constituent with at least 127 sessions,
+    independent of ADR and scan-specific technical/liquidity filters.
+    Sector return is the median constituent 6M return; Sector RS is the
+    percentile rank of sector excess return versus the Nifty 500 proxy.
+    """
+    classification = load_industry_classification()
+    histories = load_nse_history()
+    records = []
+    for symbol in symbols:
+        key = str(symbol).strip().upper()
+        hist = histories.get(key)
+        if hist is None or len(hist) < 127:
+            continue
+        close = series(hist, "CLOSE").dropna()
+        if len(close) < 127:
+            continue
+        sector = classification.get(key, {}).get("Sector", "")
+        if not sector or str(sector).strip().lower() in ("unknown", "unclassified", "nan"):
+            continue
+        ret_6m = float((close.iloc[-1] / float(close.iloc[-127]) - 1) * 100)
+        records.append({"Symbol": key, "Sector": sector, "6M return (%)": ret_6m})
+    constituents = pd.DataFrame(records)
+    if constituents.empty:
+        return {}, pd.DataFrame(columns=[
+            "Sector", "Constituents", "Median 6M return (%)",
+            "Excess return vs Nifty 500 (%)", "Sector RS score"
+        ])
+    ranking = constituents.groupby("Sector").agg(
+        Constituents=("Symbol", "nunique"),
+        **{"Median 6M return (%)": ("6M return (%)", "median")}
+    ).reset_index()
+    ranking["Excess return vs Nifty 500 (%)"] = (
+        ranking["Median 6M return (%)"] - nifty500_return
+    )
+    ranking["Sector RS score"] = (
+        ranking["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
+    ).round(1)
+    ranking = ranking.sort_values(
+        ["Sector RS score", "Excess return vs Nifty 500 (%)"],
+        ascending=[False, False]
+    ).reset_index(drop=True)
+    sector_map = ranking.set_index("Sector")["Sector RS score"].to_dict()
+    return sector_map, ranking
+
 def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
                    min_above_low, min_turnover, proximity, use_peg, max_peg,
                    use_volume_filter, volume_threshold_pct,
@@ -297,7 +344,7 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
              max_peg=2.0, workers=6, use_volume_filter=False,
              volume_threshold_pct=None, classification_level="Sector",
              selected_sectors=None, selected_industries=None,
-             min_adr_pct=None):
+             min_adr_pct=None, use_sector_rs_filter=False, min_sector_rs=70):
     if volume_threshold_pct is None:
         volume_threshold_pct = 70.0 if scan_type == "Pullback" else 150.0
     if min_adr_pct is None:
@@ -338,16 +385,21 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
     rs_map, group_medians, strong_names = build_universe_strength_context(
         symbols, classification_level, nifty500_return, MIN_ADR_PULLBACK_PCT
     )
+    sector_rs_map, sector_ranking = build_sector_strength_context(symbols, nifty500_return)
     group_column = classification_level if classification_level in (
         "Sector", "Industry", "Basic industry"
     ) else "Sector"
     df["Excess return vs Nifty 500 (%)"] = df["6M return (%)"] - nifty500_return
     df["RS score"] = df["Symbol"].map(rs_map)
+    df["Sector RS score"] = df["Sector"].map(sector_rs_map)
     df["Classification group median 6M return (%)"] = df[group_column].map(group_medians)
     df["Strong group"] = df[group_column].isin(strong_names)
     df = df[df["RS score"].notna() & (df["RS score"] >= min_rs)]
+    if use_sector_rs_filter:
+        df = df[df["Sector RS score"].notna() & (df["Sector RS score"] >= min_sector_rs)]
     if strong_sector_only:
         df = df[df["Strong group"]]
+    df.attrs["sector_rs_ranking"] = sector_ranking
     if not df.empty:
         sort_cols = ["RS score", "Prior 6M swing advance (%)", "30D avg turnover (₹ Cr)"]
         df = df.sort_values(sort_cols, ascending=[False, False, False], na_position="last")
@@ -400,6 +452,15 @@ with st.sidebar:
     min_above_low = st.number_input("Minimum price / 52-week low", min_value=1.0, value=1.5, step=0.1)
     min_turnover = st.number_input("Minimum 30-day average turnover (₹ crore)", min_value=0.0, value=7.0, step=1.0)
     min_rs = st.slider("Minimum Relative Strength score", 0, 100, 80)
+    use_sector_rs_filter = st.checkbox(
+        "Apply minimum Sector RS filter",
+        value=False,
+        help="Sector RS ranks each sector's median 6-month return relative to the Nifty 500 proxy. The ranking is shown even when this filter is off."
+    )
+    min_sector_rs = st.slider(
+        "Minimum Sector RS score", 0, 100, 70,
+        disabled=not use_sector_rs_filter
+    )
     strong_sector_only = st.checkbox("Only strong groups", value=True)
     classification_level = st.selectbox(
         "Classification level for strength filter",
@@ -460,15 +521,21 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
                 min_turnover, min_rs, strong_sector_only, proximity, use_peg,
                 max_peg, workers, use_volume_filter, volume_threshold_pct,
                 classification_level, selected_sectors, selected_industries,
-                min_adr_pct
+                min_adr_pct, use_sector_rs_filter, min_sector_rs
             )
+            sector_ranking = results.attrs.get("sector_rs_ranking", pd.DataFrame())
             save_daily_results(results, symbols, errors)
             st.session_state["latest_results"] = results
+            st.session_state["latest_sector_rs"] = sector_ranking
             st.session_state["latest_errors"] = errors
             st.session_state["latest_scan_type"] = scan_type
         st.success(f"{scan_type} scan completed: {len(results)} matches; {len(errors)} data errors.")
 
 if "latest_results" in st.session_state:
+    sector_ranking = st.session_state.get("latest_sector_rs", pd.DataFrame())
+    st.subheader("Sector Relative Strength ranking")
+    if not sector_ranking.empty:
+        st.dataframe(sector_ranking, use_container_width=True, hide_index=True)
     st.subheader(f"2. Latest {st.session_state.get('latest_scan_type', '')} scan results")
     latest = st.session_state["latest_results"]
     if latest.empty:
@@ -515,7 +582,7 @@ st.markdown("""
 - **Momentum mode:** keeps the existing minimum six-month return of 50% by default.
 - **Pullback mode:** does not require the current six-month return to remain above 50%. Instead, the stock must have made at least a 50% rise from its six-month low to its six-month high, have a rising EMA50, and be within the chosen distance (2% by default) of EMA20 or EMA50 while remaining no more than 2% below EMA50.
 - **Pullback labels:** “Near EMA support” means the stock is in the pullback zone. “Pullback turning up” means the latest close is above the previous close and above the day's open. These are screening labels, not confirmed buy signals.
-- **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among the broad NSE EQ universe with at least 127 sessions and ADR14 of at least 2%, before scan-specific technical and liquidity filters.
+- **Sector Relative Strength:** each sector's median six-month constituent return minus the Nifty 500 proxy return, ranked by percentile across sectors. It uses all history-qualified NSE EQ constituents (not the ADR filter) and is displayed strongest to weakest; its minimum-score filter is optional and off by default.\n- **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among the broad NSE EQ universe with at least 127 sessions and ADR14 of at least 2%, before scan-specific technical and liquidity filters.
 - **Sector and industry classification:** sourced from the reviewed `industry_classification.csv` database. Optional sector and industry selections narrow the universe; the strong-group filter can evaluate Sector, Industry, or Basic industry median six-month returns (top 30% and above the benchmark).
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
 - **ADR:** average daily high-low range as a percentage of close over 14 sessions. The default minimum is 3% for Momentum and 2% for Pullback; each is independently adjustable. Pullback has a lower floor because its separate setup and contraction checks already seek quieter price/volume behaviour. ADR is a historical volatility eligibility filter, not a requirement for today's pullback candle.
