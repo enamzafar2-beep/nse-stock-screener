@@ -16,7 +16,8 @@ BENCHMARK = "^CRSLDX"  # Yahoo Finance proxy for Nifty 500; NSE stock OHLCV come
 NSE_HISTORY_FILE = ROOT / "nse_daily_history.csv.gz"
 INDUSTRY_FILE = ROOT / "industry_classification.csv"
 ADR_SESSIONS = 14
-MIN_ADR_PCT = 3.0
+MIN_ADR_MOMENTUM_PCT = 3.0
+MIN_ADR_PULLBACK_PCT = 2.0
 
 @lru_cache(maxsize=1)
 def load_nse_history():
@@ -92,11 +93,12 @@ def benchmark_return():
     except Exception:
         return None
 
-def build_universe_strength_context(symbols, classification_level, nifty500_return):
+def build_universe_strength_context(symbols, classification_level, nifty500_return,
+                                    min_adr_pct=MIN_ADR_PULLBACK_PCT):
     """
     Calculate RS ranks and group medians from the broad NSE EQ universe,
     before scan-specific EMA, volume, liquidity and market-cap filters.
-    Only symbols with 127 sessions and ADR14 >= 3% enter this strength universe.
+    Only symbols with 127 sessions and ADR14 >= the shared 2% floor enter this strength universe.
     """
     classification = load_industry_classification()
     group_column = classification_level if classification_level in (
@@ -115,7 +117,7 @@ def build_universe_strength_context(symbols, classification_level, nifty500_retu
         low = series(hist, "LOW").reindex(close.index)
         last = float(close.iloc[-1])
         adr = float((((high - low) / close) * 100).tail(ADR_SESSIONS).mean())
-        if not math.isfinite(adr) or adr < MIN_ADR_PCT:
+        if not math.isfinite(adr) or adr < min_adr_pct:
             continue
         ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
         group = classification.get(str(symbol).strip().upper(), {}).get(group_column, "")
@@ -148,7 +150,8 @@ def build_universe_strength_context(symbols, classification_level, nifty500_retu
 
 def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
                    min_above_low, min_turnover, proximity, use_peg, max_peg,
-                   use_volume_filter, volume_threshold_pct):
+                   use_volume_filter, volume_threshold_pct,
+                   min_adr_pct=MIN_ADR_MOMENTUM_PCT):
     try:
         hist = download_history(symbol)
         if hist is None or len(hist) < 127:
@@ -165,7 +168,7 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         latest_volume = int(volume.iloc[-1])
         avg_volume_30d = int(volume.tail(30).mean())
         adr_pct = float((((high - low) / close) * 100).tail(ADR_SESSIONS).mean())
-        if not math.isfinite(adr_pct) or adr_pct < MIN_ADR_PCT:
+        if not math.isfinite(adr_pct) or adr_pct < min_adr_pct:
             return None, None
         prior_30d_avg_volume = float(volume.iloc[-31:-1].mean())
         volume_ratio_pct = (
@@ -293,16 +296,19 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
              strong_sector_only=True, proximity=2, use_peg=False,
              max_peg=2.0, workers=6, use_volume_filter=False,
              volume_threshold_pct=None, classification_level="Sector",
-             selected_sectors=None, selected_industries=None):
+             selected_sectors=None, selected_industries=None,
+             min_adr_pct=None):
     if volume_threshold_pct is None:
         volume_threshold_pct = 70.0 if scan_type == "Pullback" else 150.0
+    if min_adr_pct is None:
+        min_adr_pct = MIN_ADR_PULLBACK_PCT if scan_type == "Pullback" else MIN_ADR_MOMENTUM_PCT
     rows, errors = [], []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(inspect_symbol, symbol, scan_type, min_mcap, min_return,
                         min_price, min_above_low, min_turnover, proximity,
                         use_peg, max_peg, use_volume_filter,
-                        volume_threshold_pct): symbol
+                        volume_threshold_pct, min_adr_pct): symbol
             for symbol in symbols
         }
         for future in as_completed(futures):
@@ -330,7 +336,7 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
     # Rank against the broad ADR/history-qualified NSE universe, not merely
     # stocks that already passed this scan's technical and liquidity filters.
     rs_map, group_medians, strong_names = build_universe_strength_context(
-        symbols, classification_level, nifty500_return
+        symbols, classification_level, nifty500_return, MIN_ADR_PULLBACK_PCT
     )
     group_column = classification_level if classification_level in (
         "Sector", "Industry", "Basic industry"
@@ -380,6 +386,13 @@ with st.sidebar:
     scan_type = st.radio("Choose what to find", ["Momentum", "Pullback"],
                          help="Pullback finds stocks with a prior strong advance that are now near a rising EMA20 or EMA50.")
     st.header("Core filters")
+    min_adr_pct = st.number_input(
+        f"Minimum ADR {ADR_SESSIONS}D (%) — {scan_type}",
+        min_value=0.0, max_value=15.0,
+        value=MIN_ADR_MOMENTUM_PCT if scan_type == "Momentum" else MIN_ADR_PULLBACK_PCT,
+        step=0.25,
+        help="Separate volatility floor for each scan mode. Pullback defaults lower because the setup already requires price and volume contraction."
+    )
     min_mcap = st.number_input("Minimum market cap (₹ crore)", min_value=1, value=1000, step=100)
     min_return = st.number_input("Minimum 6-month return (%)", min_value=0.0, value=50.0, step=5.0,
                                  disabled=(scan_type == "Pullback"))
@@ -446,7 +459,8 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
                 symbols, scan_type, min_mcap, min_return, min_price, min_above_low,
                 min_turnover, min_rs, strong_sector_only, proximity, use_peg,
                 max_peg, workers, use_volume_filter, volume_threshold_pct,
-                classification_level, selected_sectors, selected_industries
+                classification_level, selected_sectors, selected_industries,
+                min_adr_pct
             )
             save_daily_results(results, symbols, errors)
             st.session_state["latest_results"] = results
@@ -501,10 +515,10 @@ st.markdown("""
 - **Momentum mode:** keeps the existing minimum six-month return of 50% by default.
 - **Pullback mode:** does not require the current six-month return to remain above 50%. Instead, the stock must have made at least a 50% rise from its six-month low to its six-month high, have a rising EMA50, and be within the chosen distance (2% by default) of EMA20 or EMA50 while remaining no more than 2% below EMA50.
 - **Pullback labels:** “Near EMA support” means the stock is in the pullback zone. “Pullback turning up” means the latest close is above the previous close and above the day's open. These are screening labels, not confirmed buy signals.
-- **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among stocks that pass the selected scan's initial filters.
+- **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among the broad NSE EQ universe with at least 127 sessions and ADR14 of at least 2%, before scan-specific technical and liquidity filters.
 - **Sector and industry classification:** sourced from the reviewed `industry_classification.csv` database. Optional sector and industry selections narrow the universe; the strong-group filter can evaluate Sector, Industry, or Basic industry median six-month returns (top 30% and above the benchmark).
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
-- **ADR:** average daily high-low range as a percentage of close over 14 sessions; stocks below 3% are excluded in both scan modes. This is a historical volatility eligibility filter, not a requirement for today's pullback candle.
+- **ADR:** average daily high-low range as a percentage of close over 14 sessions. The default minimum is 3% for Momentum and 2% for Pullback; each is independently adjustable. Pullback has a lower floor because its separate setup and contraction checks already seek quieter price/volume behaviour. ADR is a historical volatility eligibility filter, not a requirement for today's pullback candle.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
 - **Pullback contraction confirmation (enabled by default):** all three conditions must hold: today's volume is no more than 70% by default of the preceding 30-session average (latest day excluded from that baseline); average volume over the latest 5 sessions is below the preceding 20-session average; and average daily high-low range over the latest 5 sessions is below the preceding 20-session average. Disable this option only if you want to see EMA pullbacks without these contraction filters. The range comparison measures price contraction, not direction.
 - **Momentum volume confirmation:** optional and separate. When enabled, today's volume must be at least 150% by default of the preceding 30 trading days' average.
