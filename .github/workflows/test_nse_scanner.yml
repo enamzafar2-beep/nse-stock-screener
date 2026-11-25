@@ -5,6 +5,8 @@ on:
       - "test/nse-bhavcopy-download"
     paths:
       - "app.py"
+      - "industry_classification.csv"
+      - "test_industry_classification.py"
       - "test_nse_scanner.py"
       - "universe.csv"
       - "nse_daily_history.csv.gz"
@@ -27,7 +29,9 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --upgrade pip pandas yfinance
       - name: Check scanner and test syntax
-        run: python -m py_compile app.py test_nse_scanner.py
+        run: python -m py_compile app.py test_nse_scanner.py test_industry_classification.py
+      - name: Validate complete sector and industry classification
+        run: python test_industry_classification.py
       - name: Run scanner filter test using saved NSE database
         run: python test_nse_scanner.py
       - name: Upload comparison report
