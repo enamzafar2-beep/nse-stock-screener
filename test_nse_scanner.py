@@ -288,7 +288,7 @@ try:
     mapping_table = mapping_table.rename(columns={"Ticker": "Symbol"})
     mapping_table["Sector"] = mapping_table["Sector"].astype(str).str.strip()
     mapping_table["Industry"] = mapping_table["Industry"].astype(str).str.strip()
-    mapping_table = mapping_table[["Symbol", "Sector", "Industry"]]
+    mapping_table = mapping_table[["Symbol", "Sector", "Industry"]].rename(columns={"Sector": "Annexure Sector", "Industry": "Annexure Industry"})
     report = report.merge(mapping_table, on="Symbol", how="left")
     mapped_count = int(report["Industry"].notna().sum())
     print(
@@ -353,10 +353,10 @@ for mode_name, technical_column in [
     ("Pullback", "Pullback default (all 3 contraction checks)"),
 ]:
     report = add_mapping_strength_comparison(
-        report, technical_column, mode_name, "Sector"
+        report, technical_column, mode_name, "Annexure Sector"
     )
     report = add_mapping_strength_comparison(
-        report, technical_column, mode_name, "Industry"
+        report, technical_column, mode_name, "Annexure Industry"
     )
 
 report = report.sort_values(
