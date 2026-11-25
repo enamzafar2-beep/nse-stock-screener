@@ -1,7 +1,9 @@
 from pathlib import Path
+from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import math
 import pandas as pd
+import requests
 import yfinance as yf
 
 ROOT = Path(__file__).parent
@@ -257,6 +259,102 @@ report = apply_relative_strength_and_sector(
 report = apply_relative_strength_and_sector(
     report, "Pullback default (all 3 contraction checks)", "Pullback"
 )
+
+# Compare the current Yahoo broad-sector filter with the more granular
+# Annexure/BSE reference mapping. This is an audit only; app.py is unchanged.
+# A minimum of two eligible stocks per group is tested to avoid declaring a
+# one-stock group "strong" from a single company's return.
+ANNEXURE_URL = "https://theannexure.com/companies"
+try:
+    response = requests.get(
+        ANNEXURE_URL,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; NSEScannerIndustryAudit/1.0)"},
+        timeout=60,
+    )
+    response.raise_for_status()
+    mapping_tables = pd.read_html(StringIO(response.text))
+    if not mapping_tables:
+        raise ValueError("No company classification table found")
+    mapping_table = max(mapping_tables, key=len)
+    mapping_table.columns = [str(col).strip() for col in mapping_table.columns]
+    required_mapping_cols = {"Ticker", "Sector", "Industry"}
+    if not required_mapping_cols.issubset(mapping_table.columns):
+        raise ValueError(f"Missing mapping columns: {sorted(required_mapping_cols - set(mapping_table.columns))}")
+    mapping_table["Ticker"] = mapping_table["Ticker"].astype(str).str.strip().str.upper()
+    mapping_table = mapping_table.drop_duplicates("Ticker", keep="first")
+    mapping_table = mapping_table.rename(columns={"Ticker": "Symbol"})
+    mapping_table["Sector"] = mapping_table["Sector"].astype(str).str.strip()
+    mapping_table["Industry"] = mapping_table["Industry"].astype(str).str.strip()
+    mapping_table = mapping_table[["Symbol", "Sector", "Industry"]]
+    report = report.merge(mapping_table, on="Symbol", how="left")
+    mapped_count = int(report["Industry"].notna().sum())
+    print(
+        f"Annexure/BSE mapping coverage in report: {mapped_count:,}/{len(report):,} "
+        f"({mapped_count / max(len(report), 1) * 100:.1f}%)"
+    )
+except Exception as exc:
+    print(f"Annexure industry comparison warning: {type(exc).__name__}: {str(exc)[:160]}")
+    report["Sector"] = None
+    report["Industry"] = None
+
+def add_mapping_strength_comparison(frame, technical_column, prefix, group_column):
+    eligible = frame[
+        frame[technical_column] & frame["Market cap >= ₹1,000 Cr"]
+    ].copy()
+    result_column = f"{prefix} {group_column} final (min 2 stocks)"
+    frame[result_column] = False
+    if eligible.empty or group_column not in eligible:
+        print(f"{result_column}: 0 (mapping unavailable)")
+        return frame
+
+    eligible = eligible[
+        eligible[group_column].notna()
+        & ~eligible[group_column].astype(str).str.strip().str.lower().isin(
+            ["", "nan", "unclassified", "unknown"]
+        )
+    ].copy()
+    if eligible.empty:
+        print(f"{result_column}: 0 (no mapped candidates)")
+        return frame
+
+    eligible["RS"] = (
+        eligible["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
+    ).round(1)
+    group_counts = eligible.groupby(group_column)["Symbol"].count()
+    group_medians = eligible.groupby(group_column)["6M return (%)"].median()
+    valid_groups = group_counts[group_counts >= 2].index
+    group_medians = group_medians.loc[group_medians.index.intersection(valid_groups)]
+    if group_medians.empty:
+        print(f"{result_column}: 0 (no groups with at least two candidates)")
+        return frame
+
+    strong_groups = set(
+        group_medians[group_medians >= group_medians.quantile(0.70)].index
+    )
+    strong_groups = {
+        name for name in strong_groups if group_medians[name] > benchmark_return
+    }
+    passed_symbols = set(
+        eligible.loc[
+            (eligible["RS"] >= MIN_RS_SCORE)
+            & eligible[group_column].isin(strong_groups),
+            "Symbol",
+        ]
+    )
+    frame[result_column] = frame["Symbol"].isin(passed_symbols)
+    print(f"{result_column}: {len(passed_symbols):,}")
+    return frame
+
+for mode_name, technical_column in [
+    ("Momentum", "Momentum core (pre market-cap/RS/sector)"),
+    ("Pullback", "Pullback default (all 3 contraction checks)"),
+]:
+    report = add_mapping_strength_comparison(
+        report, technical_column, mode_name, "Sector"
+    )
+    report = add_mapping_strength_comparison(
+        report, technical_column, mode_name, "Industry"
+    )
 
 report = report.sort_values(
     ["Pullback final pass", "Momentum final pass",
