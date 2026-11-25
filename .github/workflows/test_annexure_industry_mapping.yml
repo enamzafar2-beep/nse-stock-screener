@@ -32,3 +32,4 @@ jobs:
           path: |
             annexure_industry_mapping_test.csv
             annexure_industry_mapping_summary.txt
+            annexure_unmapped_name_candidates.csv
