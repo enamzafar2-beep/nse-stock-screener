@@ -1,0 +1,3 @@
+Manual refresh trigger for the two-year NSE historical database.
+Created 25 November 2026 to rebuild the database using the latest available NSE EOD bhavcopy data.
+This file is a workflow trigger only; it does not affect scanner logic.
