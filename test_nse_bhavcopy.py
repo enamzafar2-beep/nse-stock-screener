@@ -35,7 +35,7 @@ last_error = None
 for offset in range(1, 11):
     day = today - timedelta(days=offset)
     date_tag = day.strftime("%d%m%Y")
-    url = f"https://nsearchives.nseindia.com/content/cm/sec_bhavdata_full_{date_tag}.csv"
+    url = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date_tag}.csv"
     print(f"Trying {day.isoformat()}: {url}")
     try:
         response = session.get(url, timeout=35)
