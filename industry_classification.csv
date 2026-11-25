@@ -2372,7 +2372,6 @@ AARON,Capital Goods,Industrial Manufacturing,Industrial Products,Manual disclosu
 AIROLAM,Construction Materials,Other Construction Materials,Plywood Boards/ Laminates,Manual disclosure-verified override; see manual_industry_overrides.csv
 AJOONI,Fast Moving Consumer Goods,Agricultural Food & other Products,Animal Feed,Manual disclosure-verified override; see manual_industry_overrides.csv
 ARTNIRMAN,Realty,Realty,"Residential, Commercial Projects",Manual disclosure-verified override; see manual_industry_overrides.csv
-BALAXI,Healthcare,Pharmaceuticals & Biotechnology,Pharmaceuticals,Manual disclosure-verified override; see manual_industry_overrides.csv
 ELGIRUBCO,Automobile and Auto Components,Auto Components,Tyres & Rubber Products,Manual disclosure-verified override; see manual_industry_overrides.csv
 ESFL,Consumer Durables,Household Products,Household Products,Manual disclosure-verified override; see manual_industry_overrides.csv
 EVONILE,Healthcare,Pharmaceuticals & Biotechnology,Pharmaceuticals,Manual disclosure-verified override; see manual_industry_overrides.csv
@@ -2418,3 +2417,5 @@ LFIC,Financial Services,Finance,Investment Company,Manual disclosure-verified ov
 LIBAS,Diversified,Diversified,Diversified,Manual disclosure-verified override; see manual_industry_overrides.csv
 MAHESHWARI,Diversified,Diversified,Diversified,Manual disclosure-verified override; see manual_industry_overrides.csv
 CRESTO,"Media, Entertainment & Publication",Entertainment,Media & Entertainment,Manual disclosure-verified override; see manual_industry_overrides.csv
+KICL,Financial Services,Finance,Investment Company,Manual disclosure-verified override; see manual_industry_overrides.csv
+OLIL,Services,Transport Services,Logistics Solution Provider,Manual disclosure-verified override; see manual_industry_overrides.csv
