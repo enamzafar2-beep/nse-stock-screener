@@ -343,6 +343,35 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
     except Exception as exc:
         return None, f"{symbol}: {str(exc)[:160]}"
 
+def identify_ipo_short_history_symbols(symbols, min_sessions=127):
+    """Create a review list for EQ symbols with too little history for six-month scans.
+
+    This is an operational IPO/short-history bucket, not proof of an IPO date:
+    missing or incomplete bhavcopy coverage can produce the same condition.
+    """
+    histories = load_nse_history()
+    records = []
+    for symbol in symbols:
+        key = str(symbol).strip().upper()
+        hist = histories.get(key)
+        sessions = 0 if hist is None else int(len(hist))
+        if sessions < min_sessions:
+            first_date = str(hist.index.min().date()) if hist is not None and sessions else ""
+            last_date = str(hist.index.max().date()) if hist is not None and sessions else ""
+            records.append({
+                "Symbol": key,
+                "Classification": "IPO / Short History",
+                "Available sessions": sessions,
+                "First available date": first_date,
+                "Last available date": last_date,
+                "Review note": "Under 127 sessions; verify listing date and historical-data coverage."
+            })
+    return pd.DataFrame(records, columns=[
+        "Symbol", "Classification", "Available sessions",
+        "First available date", "Last available date", "Review note"
+    ])
+
+
 def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
              min_above_low=1.5, min_turnover=7, min_rs=80,
              strong_sector_only=True, proximity=2, use_peg=False,
@@ -436,6 +465,15 @@ def save_daily_results(df, symbols, errors, scan_type="Momentum"):
 if os.getenv("NSE_DAILY_SCAN") == "1":
     symbols = load_symbols()
     failures = []
+    ipo_short_history = identify_ipo_short_history_symbols(symbols)
+    ipo_short_history.to_csv(ROOT / "ipo_short_history.csv", index=False)
+    print(
+        f"IPO / Short History classification: {len(ipo_short_history)} symbols "
+        f"with fewer than 127 verified sessions"
+    )
+    if not ipo_short_history.empty:
+        print("IPO / Short History symbols: " +
+              ", ".join(ipo_short_history["Symbol"].tolist()))
     for daily_scan_type in ("Momentum", "Pullback"):
         results, errors = run_scan(symbols, daily_scan_type)
         save_daily_results(results, symbols, errors, daily_scan_type)
