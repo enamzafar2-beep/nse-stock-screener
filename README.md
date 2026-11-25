@@ -2,9 +2,11 @@
 
 ## Files
 - `app.py`: Streamlit dashboard, manual scanner, persistent daily results.
-- `.github/workflows/daily_scan.yml`: weekday scheduled scan at 4:30 PM IST (11:00 UTC), plus manual workflow dispatch.
+- `.github/workflows/daily_nse_pipeline.yml`: refreshes the NSE EQ universe and verified Full Bhavcopy history, then runs both Momentum and Pullback scans. It is scheduled for weekdays at 6:00 PM IST and can also be started manually.
 - `universe.csv`: symbols used by the scheduled scan. Add NSE symbols in the `Symbol` column.
-- `daily_scan_results.csv`: created/updated by the workflow and displayed in the dashboard.
+- `nse_daily_history.csv.gz`: approximately two years of verified NSE EQ daily OHLCV and turnover history.
+- `industry_classification.csv`: reviewed company-to-sector/industry classification map.
+- `daily_scan_results.csv`: separate date-stamped Momentum and Pullback results, displayed in the dashboard.
 
 ## Setup
 1. Upload/replace `app.py`, `requirements.txt`, and `README.md` in the repository root.
@@ -14,10 +16,10 @@
 5. Open Actions → NSE daily scan → Run workflow to test immediately. The scheduled job then runs weekdays at 4:30 PM IST.
 6. Streamlit Community Cloud will redeploy after the commit; refresh the dashboard to see saved results.
 
-The scheduled scan uses the symbols in `universe.csv` and the default thresholds in `app.py`. Manual dashboard scans use the symbols and thresholds selected in the app.
+The automated pipeline refreshes the NSE universe, rebuilds and validates the historical database, and runs both strategies using the default thresholds in `app.py`. Manual dashboard scans use the symbols and thresholds selected in the app. Each day's Momentum and Pullback results are retained independently. GitHub scheduled workflows run only from the repository's default branch; the pipeline must be deployed to that branch before its schedule becomes active.
 
 ## Data limitations
-Yahoo Finance through yfinance is unofficial; data may be delayed, incomplete, throttled or inaccurate. This is a research screener, not investment advice.
+NSE Full Bhavcopy supplies stock OHLCV and turnover. Yahoo Finance through yfinance remains the source for the Nifty 500 proxy and company market-cap / PEG metadata; those fields may be delayed, incomplete, throttled or inaccurate. Raw NSE prices are not corporate-action adjusted, so splits and bonuses can distort historical returns and moving averages. This is a research screener, not investment advice.
 
 
 ## Full NSE universe
