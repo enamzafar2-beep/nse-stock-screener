@@ -1,6 +1,7 @@
 import io
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
@@ -26,7 +27,7 @@ required = {
     "TURNOVER_LACS",
 }
 
-today = date.today()
+today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
 downloaded = None
 used_date = None
 last_error = None
