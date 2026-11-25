@@ -1,6 +1,15 @@
 name: Daily NSE Full-Data Scanner
 
 on:
+  # Exercise every end-to-end pipeline change on the isolated test branch.
+  push:
+    branches:
+      - "test/nse-bhavcopy-download"
+    paths:
+      - "app.py"
+      - "build_nse_history.py"
+      - "refresh_universe.py"
+      - ".github/workflows/daily_nse_pipeline.yml"
   # GitHub schedules run only from the repository's default branch.
   # This schedule becomes active after an explicitly approved deployment.
   schedule:
