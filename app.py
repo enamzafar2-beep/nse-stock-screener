@@ -2,16 +2,34 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import math
+from functools import lru_cache
 
 import pandas as pd
 import streamlit as st
-import yfinance as yf
+import yfinance as yf  # Retained only for benchmark and company metadata
 
 ROOT = Path(__file__).parent
 HISTORY_FILE = ROOT / "daily_scan_results.csv"
 UNIVERSE_FILE = ROOT / "universe.csv"
 IST = "Asia/Kolkata"
-BENCHMARK = "^CRSLDX"  # Yahoo Finance symbol used here for Nifty 500
+BENCHMARK = "^CRSLDX"  # Yahoo Finance proxy for Nifty 500; NSE stock OHLCV comes from the local database
+NSE_HISTORY_FILE = ROOT / "nse_daily_history.csv.gz"
+ADR_SESSIONS = 14
+MIN_ADR_PCT = 3.0
+
+@lru_cache(maxsize=1)
+def load_nse_history():
+    if not NSE_HISTORY_FILE.exists():
+        raise FileNotFoundError("NSE historical database nse_daily_history.csv.gz is missing.")
+    frame = pd.read_csv(NSE_HISTORY_FILE, compression="gzip", parse_dates=["DATE"])
+    required = {"DATE", "SYMBOL", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "TURNOVER_CRORES"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"NSE history database is missing columns: {sorted(missing)}")
+    frame["SYMBOL"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
+    frame = frame.sort_values(["SYMBOL", "DATE"])
+    return {symbol: group.set_index("DATE")[["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "TURNOVER_CRORES"]].astype(float)
+            for symbol, group in frame.groupby("SYMBOL", sort=False)}
 
 def load_symbols():
     if UNIVERSE_FILE.exists():
@@ -19,6 +37,8 @@ def load_symbols():
             frame = pd.read_csv(UNIVERSE_FILE)
             col = next((c for c in frame.columns if str(c).strip().lower() == "symbol"), None)
             if col:
+                if "SERIES" in frame.columns:
+                    frame = frame[frame["SERIES"].astype(str).str.upper().str.strip() == "EQ"]
                 symbols = sorted(set(frame[col].dropna().astype(str).str.upper()
                                      .str.replace(".NS", "", regex=False).str.strip()))
                 if symbols:
@@ -29,13 +49,8 @@ def load_symbols():
             "LT", "BEL", "HAL", "MAZDOCK", "CDSL", "MCX"]
 
 def download_history(symbol):
-    hist = yf.download(f"{symbol}.NS", period="1y", interval="1d",
-                       auto_adjust=True, progress=False, threads=False, timeout=25)
-    if hist is None or hist.empty:
-        return None
-    if isinstance(hist.columns, pd.MultiIndex):
-        hist.columns = hist.columns.get_level_values(0)
-    return hist
+    # Prices, volume and turnover are sourced from the verified NSE bhavcopy database.
+    return load_nse_history().get(str(symbol).upper())
 
 def series(hist, name):
     value = hist[name]
@@ -65,17 +80,20 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         hist = download_history(symbol)
         if hist is None or len(hist) < 127:
             return None, f"{symbol}: insufficient daily history"
-        close = series(hist, "Close").dropna()
-        high = series(hist, "High").reindex(close.index)
-        low = series(hist, "Low").reindex(close.index)
-        open_price = series(hist, "Open").reindex(close.index)
-        volume = series(hist, "Volume").reindex(close.index).fillna(0)
+        close = series(hist, "CLOSE").dropna()
+        high = series(hist, "HIGH").reindex(close.index)
+        low = series(hist, "LOW").reindex(close.index)
+        open_price = series(hist, "OPEN").reindex(close.index)
+        volume = series(hist, "VOLUME").reindex(close.index).fillna(0)
         last = float(close.iloc[-1])
         low_52w = float(low.tail(252).min())
         ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
         avg_turnover_cr = float((close.tail(30) * volume.tail(30)).mean() / 1e7)
         latest_volume = int(volume.iloc[-1])
         avg_volume_30d = int(volume.tail(30).mean())
+        adr_pct = float((((high - low) / close.replace(0, pd.NA)) * 100).tail(ADR_SESSIONS).mean())
+        if not math.isfinite(adr_pct) or adr_pct < MIN_ADR_PCT:
+            return None, None
         prior_30d_avg_volume = float(volume.iloc[-31:-1].mean())
         volume_ratio_pct = (
             latest_volume / prior_30d_avg_volume * 100
@@ -145,6 +163,7 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             "Price (₹)": last,
             "Market cap (₹ Cr)": market_cap_cr,
             "6M return (%)": ret_6m,
+            f"ADR {ADR_SESSIONS}D (%)": round(adr_pct, 2),
             "Prior 6M swing advance (%)": prior_advance_pct,
             "52W low (₹)": low_52w,
             "Above 52W low (x)": last / low_52w,
@@ -358,8 +377,9 @@ st.markdown("""
 - **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among stocks that pass the selected scan's initial filters.
 - **Strong sectors:** sectors whose median six-month return is in the top 30% of available sectors and exceeds the benchmark return.
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
+- **ADR:** average daily high-low range as a percentage of close over 14 sessions; stocks below 3% are excluded in both scan modes. This is a historical volatility eligibility filter, not a requirement for today's pullback candle.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
 - **Volume confirmation:** optional. Pullback mode can require today's volume to be no more than 70% by default of the preceding 30 trading days' average. Momentum mode can require today's volume to be at least 150% by default. The latest day is excluded from the 30-day comparison.
 - All calculations use daily end-of-day data. Intraday screening and backtesting remain future stages.
-**Data caution:** Yahoo Finance via yfinance is unofficial and may be delayed, incomplete, rate-limited or inaccurate. Market cap, sector and PEG can be missing or stale. Verify candidates with NSE and your broker. This is a research screener, not investment advice.
+**Data sources:** Daily stock OHLCV and turnover are read from the saved NSE Full Bhavcopy historical database. The Nifty 500 proxy return and company market-cap, sector and PEG metadata still use Yahoo Finance; these fields can be missing or stale. Verify candidates with NSE and your broker. This is a research screener, not investment advice.
 """)
