@@ -1,0 +1,32 @@
+name: Test NSE scanner filters
+on:
+  push:
+    branches:
+      - "test/nse-bhavcopy-download"
+    paths:
+      - "test_nse_scanner.py"
+      - ".github/workflows/test_nse_scanner.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-nse-scanner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out test branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pandas
+        run: python -m pip install --upgrade pip pandas
+      - name: Run scanner filter test using saved NSE database
+        run: python test_nse_scanner.py
+      - name: Upload comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-scanner-filter-test
+          path: nse_scanner_test_report.csv
