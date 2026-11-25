@@ -101,11 +101,30 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             if prior_30d_avg_volume > 0 else 0.0
         )
 
-        # Pullbacks prefer quieter volume; momentum prefers expanding volume.
+        # Compare the latest five sessions with the immediately preceding
+        # twenty sessions. These are separate contraction checks from the
+        # latest-day 70% volume test.
+        avg_volume_5d = float(volume.tail(5).mean())
+        prior_20d_avg_volume = float(volume.iloc[-25:-5].mean())
+        range_pct = ((high - low) / close) * 100
+        avg_range_5d_pct = float(range_pct.tail(5).mean())
+        prior_20d_avg_range_pct = float(range_pct.iloc[-25:-5].mean())
+        volume_contracting = (
+            prior_20d_avg_volume > 0 and avg_volume_5d < prior_20d_avg_volume
+        )
+        price_range_contracting = (
+            prior_20d_avg_range_pct > 0 and avg_range_5d_pct < prior_20d_avg_range_pct
+        )
+
+        # Pullbacks require all three quiet/contraction conditions when the
+        # pullback volume filter is enabled. Momentum retains its separate
+        # latest-day expansion threshold.
         if use_volume_filter:
-            if scan_type == "Pullback" and volume_ratio_pct > volume_threshold_pct:
-                return None, None
-            if scan_type == "Momentum" and volume_ratio_pct < volume_threshold_pct:
+            if scan_type == "Pullback":
+                if (volume_ratio_pct > volume_threshold_pct or
+                        not volume_contracting or not price_range_contracting):
+                    return None, None
+            elif scan_type == "Momentum" and volume_ratio_pct < volume_threshold_pct:
                 return None, None
 
         if last <= min_price or low_52w <= 0 or last / low_52w < min_above_low:
@@ -171,6 +190,14 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             "Latest volume (shares)": latest_volume,
             "30D avg volume (shares)": avg_volume_30d,
             "Today's volume vs prior 30D avg (%)": round(volume_ratio_pct, 1),
+            "5D avg volume (shares)": round(avg_volume_5d, 0),
+            "Prior 20D avg volume (shares)": round(prior_20d_avg_volume, 0),
+            "5D vs prior 20D volume (%)": round(avg_volume_5d / prior_20d_avg_volume * 100, 1)
+                if prior_20d_avg_volume > 0 else None,
+            "5D avg daily range (%)": round(avg_range_5d_pct, 2),
+            "Prior 20D avg daily range (%)": round(prior_20d_avg_range_pct, 2),
+            "5D vs prior 20D range (%)": round(avg_range_5d_pct / prior_20d_avg_range_pct * 100, 1)
+                if prior_20d_avg_range_pct > 0 else None,
             "30D avg turnover (₹ Cr)": avg_turnover_cr,
             "Sector": sector,
             "PEG": peg,
@@ -285,9 +312,9 @@ with st.sidebar:
     st.header("Volume confirmation")
     if scan_type == "Pullback":
         use_volume_filter = st.checkbox(
-            "Require lower-than-average pullback volume (optional)",
-            value=False,
-            help="When enabled, today's volume must be no more than the selected percentage of the previous 30 trading days' average."
+            "Require pullback volume and price contraction",
+            value=True,
+            help="When enabled, all three must hold: today's volume <= the selected % of the prior 30-session average; 5-session average volume below the preceding 20-session average; and 5-session average daily range below the preceding 20-session average."
         )
         volume_threshold_pct = st.number_input(
             "Maximum today's volume (% of prior 30-day average)",
@@ -380,7 +407,8 @@ st.markdown("""
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
 - **ADR:** average daily high-low range as a percentage of close over 14 sessions; stocks below 3% are excluded in both scan modes. This is a historical volatility eligibility filter, not a requirement for today's pullback candle.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
-- **Volume confirmation:** optional. Pullback mode can require today's volume to be no more than 70% by default of the preceding 30 trading days' average. Momentum mode can require today's volume to be at least 150% by default. The latest day is excluded from the 30-day comparison.
+- **Pullback contraction confirmation (enabled by default):** all three conditions must hold: today's volume is no more than 70% by default of the preceding 30-session average (latest day excluded from that baseline); average volume over the latest 5 sessions is below the preceding 20-session average; and average daily high-low range over the latest 5 sessions is below the preceding 20-session average. Disable this option only if you want to see EMA pullbacks without these contraction filters. The range comparison measures price contraction, not direction.
+- **Momentum volume confirmation:** optional and separate. When enabled, today's volume must be at least 150% by default of the preceding 30 trading days' average.
 - All calculations use daily end-of-day data. Intraday screening and backtesting remain future stages.
 **Data sources:** Daily stock OHLCV and turnover are read from the saved NSE Full Bhavcopy historical database. The Nifty 500 proxy return and company market-cap, sector and PEG metadata still use Yahoo Finance; these fields can be missing or stale. Verify candidates with NSE and your broker. This is a research screener, not investment advice.
 """)
