@@ -36,7 +36,7 @@ for c in ["Sector", "Industry", "Basic industry"]:
 # ambiguous or fuzzy matches are deliberately not assigned.
 def norm_name(value):
     value = re.sub(r"[^A-Z0-9]+", " ", str(value).upper()).strip()
-    value = re.sub(r"\\b(LIMITED|LTD|PRIVATE|PVT|PUBLIC|PLC|INDIA)\\b", " ", value)
+    value = re.sub(r"\b(LIMITED|LTD|PRIVATE|PVT|PUBLIC|PLC|INDIA)\b", " ", value)
     return " ".join(value.split())
 
 table["Company_key"] = table["Company"].map(norm_name)
