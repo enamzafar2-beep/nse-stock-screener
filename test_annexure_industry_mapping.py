@@ -69,6 +69,10 @@ table = pd.concat([
 ], ignore_index=True).drop_duplicates("Symbol", keep="first")
 table.to_csv(ROOT / "annexure_industry_mapping_test.csv", index=False)
 
+
+mapped = set(table["Symbol"])
+unmapped = sorted(symbols - mapped)
+
 # Exploratory fuzzy candidates for manual review only. These are never auto-mapped.
 candidate_rows = []
 unmapped_names = symbols_frame[symbols_frame[symbol_col].astype(str).str.strip().str.upper().isin(unmapped)].copy()
@@ -102,9 +106,6 @@ for _, company_row in unmapped_names.iterrows():
                 "Review status": "MANUAL REVIEW ONLY — NOT MAPPED",
             })
 pd.DataFrame(candidate_rows).to_csv(ROOT / "annexure_unmapped_name_candidates.csv", index=False)
-
-mapped = set(table["Symbol"])
-unmapped = sorted(symbols - mapped)
 sector_values = table["Sector"].dropna().astype(str).str.strip()
 sector_values = sector_values[~sector_values.str.lower().isin(["", "nan", "unclassified"])]
 industry_values = table["Industry"].dropna().astype(str).str.strip()
