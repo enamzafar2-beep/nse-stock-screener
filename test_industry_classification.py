@@ -1,5 +1,5 @@
 from pathlib import Path
-import pandas as pd
+import pandas as pd  # Validate the committed classification database against the NSE EQ universe
 
 root = Path(__file__).parent
 universe = pd.read_csv(root / "universe.csv", dtype=str).fillna("")
