@@ -32,6 +32,13 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
     ret_6m = (last / float(close.iloc[-127]) - 1) * 100
     avg_turnover = float(turnover.tail(30).mean())
     adr_pct = float((((high.tail(14) - low.tail(14)) / close.tail(14)) * 100).mean())
+    daily_range_pct = ((high - low) / close) * 100
+    range_5d = float(daily_range_pct.iloc[-5:].mean())
+    range_prior_20d = float(daily_range_pct.iloc[-25:-5].mean())
+    volume_5d = float(volume.iloc[-5:].mean())
+    volume_prior_20d = float(volume.iloc[-25:-5].mean())
+    price_range_contracting = range_5d < range_prior_20d
+    volume_contracting = volume_5d < volume_prior_20d
     prior_vol = float(volume.iloc[-31:-1].mean())
     volume_ratio = float(volume.iloc[-1] / prior_vol * 100) if prior_vol > 0 else 0.0
     ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
@@ -43,11 +50,11 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
     near20 = abs(last / ema20 - 1) * 100 <= 2.0
     near50 = abs(last / ema50 - 1) * 100 <= 2.0
     holding50 = last >= ema50 * .98
-    pullback = swing_advance >= 50 and ema50_rising and (near20 or near50) and holding50
+    pullback = (swing_advance >= 50 and ema50_rising and (near20 or near50)
+                and holding50 and price_range_contracting and volume_contracting)
     common_before_adr = last > 90 and low_52w > 0 and last / low_52w >= 1.5 and avg_turnover >= 7
-    common = common_before_adr and adr_pct >= 3.0
-    momentum = common and ret_6m >= 50
-    pullback_match = common and pullback
+    momentum = common_before_adr and adr_pct >= 3.0 and ret_6m >= 50
+    pullback_match = common_before_adr and pullback
     rows.append({
         "Symbol": symbol, "As of": g["DATE"].iloc[-1].date().isoformat(),
         "History sessions": len(g), "Price (₹)": last, "6M return (%)": ret_6m,
@@ -55,6 +62,10 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
         "30D avg NSE turnover (₹ Cr)": avg_turnover, "ADR% (14 sessions)": adr_pct,
         "ADR% >= 3%": adr_pct >= 3.0, "Latest volume": int(volume.iloc[-1]),
         "Today's volume vs prior 30D avg (%)": volume_ratio,
+        "5D avg daily range (%)": range_5d, "Prior 20D avg daily range (%)": range_prior_20d,
+        "Price range contracting": price_range_contracting,
+        "5D avg volume": volume_5d, "Prior 20D avg volume": volume_prior_20d,
+        "Volume contracting": volume_contracting,
         "EMA20 (₹)": ema20, "EMA50 (₹)": ema50,
         "Prior 6M swing advance (%)": swing_advance, "EMA50 rising": ema50_rising,
         "Momentum core filters (pre-mcap/RS/sector)": momentum,
@@ -79,7 +90,7 @@ print(f"EQ symbols excluded for insufficient history: {short_history:,}")
 print(f"Stocks passing ADR% >= 3%: {int(report['ADR% >= 3%'].sum()):,}")
 print(f"Momentum core matches after ADR (before market cap, RS and sector): {int(report['Momentum core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Momentum + 150% volume: {int(report['Momentum + 150% volume'].sum()):,}")
-print(f"Pullback core matches (before market cap, RS and sector): {int(report['Pullback core filters (pre-mcap/RS/sector)'].sum()):,}")
+print(f"Pullback matches with 5D price-range and volume contraction (before market cap, RS and sector): {int(report['Pullback core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Pullback + 70% volume: {int(report['Pullback + 70% volume'].sum()):,}")
 print("\nRequested example symbols:")
 for symbol in ["3BBLACKBIO", "AASTHA", "ABANSENT"]:
