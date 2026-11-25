@@ -92,6 +92,60 @@ def benchmark_return():
     except Exception:
         return None
 
+def build_universe_strength_context(symbols, classification_level, nifty500_return):
+    """
+    Calculate RS ranks and group medians from the broad NSE EQ universe,
+    before scan-specific EMA, volume, liquidity and market-cap filters.
+    Only symbols with 127 sessions and ADR14 >= 3% enter this strength universe.
+    """
+    classification = load_industry_classification()
+    group_column = classification_level if classification_level in (
+        "Sector", "Industry", "Basic industry"
+    ) else "Sector"
+    records = []
+    histories = load_nse_history()
+    for symbol in symbols:
+        hist = histories.get(str(symbol).strip().upper())
+        if hist is None or len(hist) < 127:
+            continue
+        close = series(hist, "CLOSE").dropna()
+        if len(close) < 127:
+            continue
+        high = series(hist, "HIGH").reindex(close.index)
+        low = series(hist, "LOW").reindex(close.index)
+        last = float(close.iloc[-1])
+        adr = float((((high - low) / close) * 100).tail(ADR_SESSIONS).mean())
+        if not math.isfinite(adr) or adr < MIN_ADR_PCT:
+            continue
+        ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
+        group = classification.get(str(symbol).strip().upper(), {}).get(group_column, "")
+        records.append({"Symbol": str(symbol).strip().upper(),
+                        "6M return (%)": ret_6m, group_column: group})
+    universe = pd.DataFrame(records)
+    if universe.empty:
+        return {}, {}, {}
+    universe["Excess return vs Nifty 500 (%)"] = universe["6M return (%)"] - nifty500_return
+    universe["RS score"] = (
+        universe["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
+    ).round(1)
+    valid_groups = universe[
+        universe[group_column].notna()
+        & ~universe[group_column].astype(str).str.strip().str.lower().isin(
+            ["", "unknown", "unclassified", "nan"]
+        )
+    ]
+    group_medians = valid_groups.groupby(group_column)["6M return (%)"].median()
+    if group_medians.empty:
+        strong_groups = set()
+    else:
+        strong_groups = set(group_medians[
+            (group_medians >= group_medians.quantile(0.70))
+            & (group_medians > nifty500_return)
+        ].index)
+    rs_map = universe.set_index("Symbol")["RS score"].to_dict()
+    return rs_map, group_medians.to_dict(), strong_groups
+
+
 def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
                    min_above_low, min_turnover, proximity, use_peg, max_peg,
                    use_volume_filter, volume_threshold_pct):
@@ -273,23 +327,19 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
         errors.append("Nifty 500 benchmark data unavailable; RS score cannot be verified.")
         return pd.DataFrame(), errors
 
+    # Rank against the broad ADR/history-qualified NSE universe, not merely
+    # stocks that already passed this scan's technical and liquidity filters.
+    rs_map, group_medians, strong_names = build_universe_strength_context(
+        symbols, classification_level, nifty500_return
+    )
+    group_column = classification_level if classification_level in (
+        "Sector", "Industry", "Basic industry"
+    ) else "Sector"
     df["Excess return vs Nifty 500 (%)"] = df["6M return (%)"] - nifty500_return
-    df["RS score"] = (df["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100).round(1)
-    group_column = classification_level if classification_level in ("Sector", "Industry", "Basic industry") else "Sector"
-    eligible_groups = df[
-        df[group_column].notna() &
-        ~df[group_column].astype(str).str.strip().str.lower().isin(["", "unknown", "unclassified", "nan"])
-    ]
-    group_perf = eligible_groups.groupby(group_column)["6M return (%)"].median()
-    if not group_perf.empty:
-        strong_names = set(group_perf[group_perf >= group_perf.quantile(0.70)].index)
-        strong_names = {name for name in strong_names if group_perf[name] > nifty500_return}
-        df["Classification group median 6M return (%)"] = df[group_column].map(group_perf)
-        df["Strong group"] = df[group_column].isin(strong_names)
-    else:
-        df["Classification group median 6M return (%)"] = None
-        df["Strong group"] = False
-    df = df[df["RS score"] >= min_rs]
+    df["RS score"] = df["Symbol"].map(rs_map)
+    df["Classification group median 6M return (%)"] = df[group_column].map(group_medians)
+    df["Strong group"] = df[group_column].isin(strong_names)
+    df = df[df["RS score"].notna() & (df["RS score"] >= min_rs)]
     if strong_sector_only:
         df = df[df["Strong group"]]
     if not df.empty:
