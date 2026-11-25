@@ -4,7 +4,10 @@ on:
     branches:
       - "test/nse-bhavcopy-download"
     paths:
+      - "app.py"
       - "test_nse_scanner.py"
+      - "universe.csv"
+      - "nse_daily_history.csv.gz"
       - ".github/workflows/test_nse_scanner.yml"
   workflow_dispatch:
 
@@ -21,8 +24,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install pandas
+      - name: Install test dependencies
         run: python -m pip install --upgrade pip pandas
+      - name: Check scanner and test syntax
+        run: python -m py_compile app.py test_nse_scanner.py
       - name: Run scanner filter test using saved NSE database
         run: python test_nse_scanner.py
       - name: Upload comparison report
@@ -30,3 +35,4 @@ jobs:
         with:
           name: nse-scanner-filter-test
           path: nse_scanner_test_report.csv
+          if-no-files-found: error
