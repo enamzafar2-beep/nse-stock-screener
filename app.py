@@ -37,8 +37,9 @@ def load_symbols():
             frame = pd.read_csv(UNIVERSE_FILE)
             col = next((c for c in frame.columns if str(c).strip().lower() == "symbol"), None)
             if col:
-                if "SERIES" in frame.columns:
-                    frame = frame[frame["SERIES"].astype(str).str.upper().str.strip() == "EQ"]
+                series_col = next((c for c in frame.columns if str(c).strip().lower() == "series"), None)
+                if series_col:
+                    frame = frame[frame[series_col].astype(str).str.upper().str.strip() == "EQ"]
                 symbols = sorted(set(frame[col].dropna().astype(str).str.upper()
                                      .str.replace(".NS", "", regex=False).str.strip()))
                 if symbols:
