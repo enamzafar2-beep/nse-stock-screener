@@ -5,6 +5,8 @@ on:
       - "test/nse-bhavcopy-download"
     paths-ignore:
       - "nse_daily_history.csv.gz"
+      - "test_nse_scanner.py"
+      - ".github/workflows/test_nse_scanner.yml"
 
 concurrency:
   group: nse-bhavcopy-test-branch
