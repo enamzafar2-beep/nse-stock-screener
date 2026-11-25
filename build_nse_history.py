@@ -29,7 +29,9 @@ required = {
 parts = []
 trading_dates = []
 missing_dates = 0
+duplicate_holiday_dates = []
 errors = []
+previous_snapshot = None
 today = date.today()
 first_day = today - timedelta(days=LOOKBACK_CALENDAR_DAYS)
 
@@ -73,7 +75,7 @@ for day_offset in range(LOOKBACK_CALENDAR_DAYS, 0, -1):
         if missing:
             raise ValueError(f"missing columns {missing}")
 
-        # Confirm the report's own date before assigning a date to its rows.
+        # Verify the report date before assigning dates to the rows.
         actual_dates = pd.to_datetime(frame["DATE1"], dayfirst=True, errors="coerce").dropna().dt.date.unique()
         if len(actual_dates) != 1 or actual_dates[0] != day:
             actual_text = ", ".join(str(x) for x in actual_dates[:3]) or "unreadable"
@@ -112,6 +114,17 @@ for day_offset in range(LOOKBACK_CALENDAR_DAYS, 0, -1):
         if len(equity) < 100:
             raise ValueError(f"only {len(equity)} usable EQ rows")
 
+        # NSE archives may publish a file on an exchange holiday that repeats
+        # the previous session's entire EQ dataset with a new DATE1. Detect
+        # those dates by comparing every symbol's OHLCV and turnover values.
+        snapshot = equity[[
+            "SYMBOL", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "TURNOVER_CRORES"
+        ]].sort_values("SYMBOL").reset_index(drop=True)
+        if previous_snapshot is not None and snapshot.equals(previous_snapshot):
+            duplicate_holiday_dates.append(day.isoformat())
+            continue
+
+        previous_snapshot = snapshot
         parts.append(equity)
         trading_dates.append(day)
         if len(trading_dates) % 25 == 0:
@@ -133,6 +146,9 @@ history.to_csv(OUT, index=False, compression="gzip", date_format="%Y-%m-%d")
 print("\nNSE HISTORICAL DATABASE SUMMARY")
 print(f"Requested range: {first_day.isoformat()} to {(today - timedelta(days=1)).isoformat()}")
 print(f"Verified trading days downloaded: {len(trading_dates)}")
+print(f"Duplicate holiday files excluded: {len(duplicate_holiday_dates)}")
+if duplicate_holiday_dates:
+    print("Excluded holiday dates: " + ", ".join(duplicate_holiday_dates))
 print(f"Weekday dates without a matching NSE report: {missing_dates}")
 print(f"Unique symbols: {history['SYMBOL'].nunique():,}")
 print(f"Total daily rows: {len(history):,}")
@@ -149,8 +165,8 @@ if errors:
 
 if len(trading_dates) < MIN_TRADING_DAYS:
     raise SystemExit(
-        f"FAIL: only {len(trading_dates)} trading days found; "
-        f"need at least {MIN_TRADING_DAYS} verified trading days"
+        f"FAIL: only {len(trading_dates)} verified trading days found; "
+        f"need at least {MIN_TRADING_DAYS}"
     )
 if history["SYMBOL"].nunique() < 1000:
     raise SystemExit("FAIL: fewer than 1,000 unique symbols in historical database")
