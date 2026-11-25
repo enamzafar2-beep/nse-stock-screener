@@ -23,7 +23,7 @@ except requests.RequestException as exc:
     print(f"Session note: {exc}")
 
 required = {
-    "SYMBOL", "SERIES", "OPEN_PRICE", "HIGH_PRICE", "LOW_PRICE",
+    "SYMBOL", "SERIES", "DATE1", "OPEN_PRICE", "HIGH_PRICE", "LOW_PRICE",
     "CLOSE_PRICE", "TTL_TRD_QNTY", "TURNOVER_LACS",
 }
 parts = []
@@ -73,6 +73,14 @@ for day_offset in range(LOOKBACK_CALENDAR_DAYS, 0, -1):
         if missing:
             raise ValueError(f"missing columns {missing}")
 
+        # Confirm the report's own date before assigning a date to its rows.
+        actual_dates = pd.to_datetime(frame["DATE1"], dayfirst=True, errors="coerce").dropna().dt.date.unique()
+        if len(actual_dates) != 1 or actual_dates[0] != day:
+            actual_text = ", ".join(str(x) for x in actual_dates[:3]) or "unreadable"
+            missing_dates += 1
+            errors.append(f"{day.isoformat()}: NSE DATE1 mismatch ({actual_text}); skipped")
+            continue
+
         frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
         equity = frame[frame["SERIES"] == "EQ"].copy()
         if equity.empty:
@@ -107,7 +115,7 @@ for day_offset in range(LOOKBACK_CALENDAR_DAYS, 0, -1):
         parts.append(equity)
         trading_dates.append(day)
         if len(trading_dates) % 25 == 0:
-            print(f"Downloaded {len(trading_dates)} trading days; latest: {day}; rows: {sum(len(p) for p in parts):,}")
+            print(f"Downloaded {len(trading_dates)} verified trading days; latest: {day}; rows: {sum(len(p) for p in parts):,}")
     except Exception as exc:
         errors.append(f"{day.isoformat()}: {exc}")
 
@@ -124,8 +132,8 @@ history.to_csv(OUT, index=False, compression="gzip", date_format="%Y-%m-%d")
 
 print("\nNSE HISTORICAL DATABASE SUMMARY")
 print(f"Requested range: {first_day.isoformat()} to {(today - timedelta(days=1)).isoformat()}")
-print(f"Trading days downloaded: {len(trading_dates)}")
-print(f"Weekday dates with no file (holiday/non-trading): {missing_dates}")
+print(f"Verified trading days downloaded: {len(trading_dates)}")
+print(f"Weekday dates without a matching NSE report: {missing_dates}")
 print(f"Unique symbols: {history['SYMBOL'].nunique():,}")
 print(f"Total daily rows: {len(history):,}")
 print(f"First stored date: {history['DATE'].min().date()}")
@@ -142,7 +150,7 @@ if errors:
 if len(trading_dates) < MIN_TRADING_DAYS:
     raise SystemExit(
         f"FAIL: only {len(trading_dates)} trading days found; "
-        f"need at least {MIN_TRADING_DAYS} for a reliable 1-year database"
+        f"need at least {MIN_TRADING_DAYS} verified trading days"
     )
 if history["SYMBOL"].nunique() < 1000:
     raise SystemExit("FAIL: fewer than 1,000 unique symbols in historical database")
