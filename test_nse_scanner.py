@@ -31,7 +31,10 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
     low_52w = float(low.tail(252).min())
     ret_6m = (last / float(close.iloc[-127]) - 1) * 100
     avg_turnover = float(turnover.tail(30).mean())
-    adr_pct = float((((high.tail(14) - low.tail(14)) / close.tail(14)) * 100).mean())
+    adr14_pct = float((((high.tail(14) - low.tail(14)) / close.tail(14)) * 100).mean())
+    adr20_pct = float((((high.tail(20) - low.tail(20)) / close.tail(20)) * 100).mean())
+    adr30_pct = float((((high.tail(30) - low.tail(30)) / close.tail(30)) * 100).mean())
+    adr_pct = adr14_pct  # Keep the current Momentum rule at 14 sessions pending comparison.
     daily_range_pct = ((high - low) / close) * 100
     range_5d = float(daily_range_pct.iloc[-5:].mean())
     range_prior_20d = float(daily_range_pct.iloc[-25:-5].mean())
@@ -59,8 +62,11 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
         "Symbol": symbol, "As of": g["DATE"].iloc[-1].date().isoformat(),
         "History sessions": len(g), "Price (₹)": last, "6M return (%)": ret_6m,
         "52-week low (₹)": low_52w, "Price / 52-week low (x)": last / low_52w,
-        "30D avg NSE turnover (₹ Cr)": avg_turnover, "ADR% (14 sessions)": adr_pct,
-        "ADR% >= 3%": adr_pct >= 3.0, "Latest volume": int(volume.iloc[-1]),
+        "30D avg NSE turnover (₹ Cr)": avg_turnover,
+        "ADR% (14 sessions)": adr14_pct, "ADR% (20 sessions)": adr20_pct,
+        "ADR% (30 sessions)": adr30_pct,
+        "ADR14 >= 3%": adr14_pct >= 3.0, "ADR20 >= 3%": adr20_pct >= 3.0,
+        "ADR30 >= 3%": adr30_pct >= 3.0, "Latest volume": int(volume.iloc[-1]),
         "Today's volume vs prior 30D avg (%)": volume_ratio,
         "5D avg daily range (%)": range_5d, "Prior 20D avg daily range (%)": range_prior_20d,
         "Price range contracting": price_range_contracting,
@@ -87,7 +93,10 @@ print(f"Database date range: {history['DATE'].min().date()} to {history['DATE'].
 print(f"EQ symbols in live universe: {len(eq_symbols):,}")
 print(f"EQ symbols with at least 252 sessions: {len(report):,}")
 print(f"EQ symbols excluded for insufficient history: {short_history:,}")
-print(f"Stocks passing ADR% >= 3%: {int(report['ADR% >= 3%'].sum()):,}")
+print("ADR comparison — number of stocks with ADR >= 3%:")
+print(f"  14 sessions: {int(report['ADR14 >= 3%'].sum()):,}")
+print(f"  20 sessions: {int(report['ADR20 >= 3%'].sum()):,}")
+print(f"  30 sessions: {int(report['ADR30 >= 3%'].sum()):,}")
 print(f"Momentum core matches after ADR (before market cap, RS and sector): {int(report['Momentum core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Momentum + 150% volume: {int(report['Momentum + 150% volume'].sum()):,}")
 print(f"Pullback matches with 5D price-range and volume contraction (before market cap, RS and sector): {int(report['Pullback core filters (pre-mcap/RS/sector)'].sum()):,}")
