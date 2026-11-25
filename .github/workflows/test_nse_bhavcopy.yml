@@ -33,7 +33,7 @@ jobs:
         run: python test_nse_bhavcopy.py
       - name: Test historical archive coverage
         run: python test_nse_history_range.py
-      - name: Build one-year NSE history database
+      - name: Build two-year NSE history database
         run: python build_nse_history.py
       - name: Save database on test branch
         run: |
