@@ -88,10 +88,10 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         last = float(close.iloc[-1])
         low_52w = float(low.tail(252).min())
         ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
-        avg_turnover_cr = float((close.tail(30) * volume.tail(30)).mean() / 1e7)
+        avg_turnover_cr = float(hist["TURNOVER_CRORES"].reindex(close.index).tail(30).mean())
         latest_volume = int(volume.iloc[-1])
         avg_volume_30d = int(volume.tail(30).mean())
-        adr_pct = float((((high - low) / close.replace(0, pd.NA)) * 100).tail(ADR_SESSIONS).mean())
+        adr_pct = float((((high - low) / close) * 100).tail(ADR_SESSIONS).mean())
         if not math.isfinite(adr_pct) or adr_pct < MIN_ADR_PCT:
             return None, None
         prior_30d_avg_volume = float(volume.iloc[-31:-1].mean())
@@ -111,7 +111,7 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             return None, None
         if avg_turnover_cr < min_turnover:
             return None, None
-        # EMA calculations use end-of-day adjusted closing prices.
+        # EMA calculations use NSE end-of-day closing prices (raw, not corporate-action adjusted).
         ema = {n: close.ewm(span=n, adjust=False).mean() for n in (10, 20, 50)}
         ema_values = {n: float(v.iloc[-1]) for n, v in ema.items()}
         ema_near = [n for n, value in ema_values.items()
