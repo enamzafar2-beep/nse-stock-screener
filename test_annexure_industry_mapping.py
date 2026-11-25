@@ -1,4 +1,5 @@
 from pathlib import Path
+from io import StringIO
 import pandas as pd
 import requests
 
@@ -11,7 +12,7 @@ url = "https://theannexure.com/companies"
 headers = {"User-Agent": "Mozilla/5.0 (compatible; NSEIndustryCoverageTest/1.0)", "Accept": "text/html"}
 response = requests.get(url, headers=headers, timeout=60)
 response.raise_for_status()
-tables = pd.read_html(response.text)
+tables = pd.read_html(StringIO(response.text))
 if not tables:
     raise SystemExit("FAIL: no company table found on The Annexure page")
 
