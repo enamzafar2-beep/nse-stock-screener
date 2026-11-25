@@ -7,8 +7,8 @@ import pandas as pd
 import requests
 
 OUT = Path("nse_daily_history.csv.gz")
-LOOKBACK_CALENDAR_DAYS = 380
-MIN_TRADING_DAYS = 200
+LOOKBACK_CALENDAR_DAYS = 760
+MIN_TRADING_DAYS = 450
 BASE_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{}.csv"
 
 session = requests.Session()
