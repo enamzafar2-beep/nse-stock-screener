@@ -1,7 +1,6 @@
 name: Daily NSE Full-Data Scanner
 
 on:
-  # Exercise every end-to-end pipeline change on the isolated test branch.
   push:
     branches:
       - "test/nse-bhavcopy-download"
@@ -11,11 +10,11 @@ on:
       - "refresh_universe.py"
       - "industry_classification.csv"
       - "manual_industry_overrides.csv"
+      - "update_performance_tracker.py"
+      - "test_performance_tracker.py"
       - ".github/workflows/daily_nse_pipeline.yml"
-  # GitHub schedules run only from the repository's default branch.
-  # This schedule becomes active after an explicitly approved deployment.
   schedule:
-    - cron: "30 12 * * 1-5" # 6:00 PM IST, after the NSE session and bhavcopy publication window
+    - cron: "30 12 * * 1-5" # 6:00 PM IST
   workflow_dispatch:
 
 concurrency:
@@ -34,31 +33,27 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
       - name: Install scanner dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
+      - name: Run performance tracker unit tests
+        run: python -m unittest test_performance_tracker.py -v
       - name: Refresh official NSE EQ universe
         run: python refresh_universe.py
-
       - name: Rebuild verified NSE Full Bhavcopy history
         run: python build_nse_history.py
-
       - name: Validate database freshness and coverage
         run: |
           python - <<'PY'
           from pathlib import Path
           import pandas as pd
           from datetime import date, timedelta
-
           path = Path("nse_daily_history.csv.gz")
           if not path.exists() or path.stat().st_size < 1_000_000:
               raise SystemExit("FAIL: NSE history database is missing or unexpectedly small")
@@ -67,47 +62,39 @@ jobs:
           sessions = dates.dt.date.nunique()
           latest = dates.max().date()
           symbols = df["SYMBOL"].nunique()
-          if sessions < 450:
-              raise SystemExit(f"FAIL: only {sessions} verified sessions")
-          if symbols < 1000:
-              raise SystemExit(f"FAIL: only {symbols} symbols")
-          if latest < date.today() - timedelta(days=7):
-              raise SystemExit(f"FAIL: stale NSE database; latest session is {latest}")
+          if sessions < 450: raise SystemExit(f"FAIL: only {sessions} verified sessions")
+          if symbols < 1000: raise SystemExit(f"FAIL: only {symbols} symbols")
+          if latest < date.today() - timedelta(days=7): raise SystemExit(f"FAIL: stale NSE database; latest session is {latest}")
           print(f"PASS: {sessions} sessions; {symbols} symbols; latest session {latest}")
           PY
-
       - name: Run Momentum and Pullback scans
         run: python app.py
         env:
           NSE_DAILY_SCAN: "1"
-
-      - name: Save refreshed data and both scan result sets
+      - name: Update forward performance tracker
+        run: python update_performance_tracker.py
+      - name: Save refreshed data, scan results and performance tracker
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add nse_daily_history.csv.gz universe.csv daily_scan_results.csv ipo_short_history.csv
+          git add nse_daily_history.csv.gz universe.csv daily_scan_results.csv ipo_short_history.csv performance_tracker.csv
           if git diff --cached --quiet; then
-            echo "No data or result changes to save."
+            echo "No data, result or tracker changes to save."
           else
-            git commit -m "Refresh NSE history and save daily Momentum and Pullback scans"
-            # Synchronize the branch immediately before publishing generated outputs.
-          # Another automation may update the branch while the long NSE
-            # history rebuild is running. Rebase our completed scan commit on
-            # the latest branch tip before pushing; prefer this run's refreshed
-            # data/results if the same generated files changed concurrently.
+            git commit -m "Refresh NSE history, daily scans and forward performance tracker"
             git fetch origin "$GITHUB_REF_NAME"
             git rebase -X theirs "origin/$GITHUB_REF_NAME"
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
-
-      - name: Upload daily scan audit files
+      - name: Upload daily scan and performance audit files
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: daily-nse-scan-${{ github.run_number }}
           path: |
             daily_scan_results.csv
+            performance_tracker.csv
             nse_daily_history.csv.gz
             universe.csv
             ipo_short_history.csv
