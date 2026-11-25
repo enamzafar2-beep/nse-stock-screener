@@ -35,7 +35,7 @@ previous_snapshot = None
 today = date.today()
 first_day = today - timedelta(days=LOOKBACK_CALENDAR_DAYS)
 
-for day_offset in range(LOOKBACK_CALENDAR_DAYS, 0, -1):
+for day_offset in range(LOOKBACK_CALENDAR_DAYS, -1, -1):
     day = today - timedelta(days=day_offset)
     if day.weekday() >= 5:
         continue
@@ -144,7 +144,7 @@ history = history.sort_values(["SYMBOL", "DATE"]).reset_index(drop=True)
 history.to_csv(OUT, index=False, compression="gzip", date_format="%Y-%m-%d")
 
 print("\nNSE HISTORICAL DATABASE SUMMARY")
-print(f"Requested range: {first_day.isoformat()} to {(today - timedelta(days=1)).isoformat()}")
+print(f"Requested range: {first_day.isoformat()} to {today.isoformat()}")
 print(f"Verified trading days downloaded: {len(trading_dates)}")
 print(f"Duplicate holiday files excluded: {len(duplicate_holiday_dates)}")
 if duplicate_holiday_dates:
