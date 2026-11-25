@@ -18,6 +18,10 @@ for _,r in o.iterrows():
  new.append(dict(Symbol=s,Sector=r.Sector,Industry=r.Industry,**{"Basic industry":r["Basic industry"]},**{"Mapping source":"Manual disclosure-verified override; see manual_industry_overrides.csv"}))
  known.add(s)
 if new: pd.concat([m,pd.DataFrame(new)],ignore_index=True).to_csv(p/"annexure_industry_mapping_test.csv",index=False)
+cp=p/"annexure_unmapped_name_candidates.csv"
+if cp.exists():
+ candidates=pd.read_csv(cp)
+ if "NSE symbol" in candidates: candidates=candidates[~candidates["NSE symbol"].astype(str).str.upper().isin(known)]; candidates.to_csv(cp,index=False)
 left=sorted(valid-known)
 (p/"annexure_industry_mapping_summary.txt").open("a").write(f"\nDisclosure-backed manual overrides applied: {len(new)}\nTotal mapped: {len(known)}\nCoverage: {len(known)/len(valid)*100:.1f}%\nUnmapped: {len(left)}\nRemaining symbols: "+", ".join(left)+"\n")
 print("Applied",len(new),"manual mappings; remaining",len(left))
