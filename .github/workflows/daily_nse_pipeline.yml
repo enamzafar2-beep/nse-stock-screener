@@ -89,7 +89,13 @@ jobs:
             echo "No data or result changes to save."
           else
             git commit -m "Refresh NSE history and save daily Momentum and Pullback scans"
-            git push origin HEAD
+            # Another automation may update the branch while the long NSE
+            # history rebuild is running. Rebase our completed scan commit on
+            # the latest branch tip before pushing; prefer this run's refreshed
+            # data/results if the same generated files changed concurrently.
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase -X theirs "origin/$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi
 
       - name: Upload daily scan audit files
