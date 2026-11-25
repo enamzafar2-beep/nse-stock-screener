@@ -203,8 +203,11 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
                    min_adr_pct=MIN_ADR_MOMENTUM_PCT):
     try:
         hist = download_history(symbol)
+        # Symbols with fewer than 127 verified sessions are expected exclusions:
+        # they cannot support six-month return/RS calculations, but this is not
+        # a data-fetch or calculation error and should not inflate the error count.
         if hist is None or len(hist) < 127:
-            return None, f"{symbol}: insufficient daily history"
+            return None, None
         close = series(hist, "CLOSE").dropna()
         high = series(hist, "HIGH").reindex(close.index)
         low = series(hist, "LOW").reindex(close.index)
