@@ -34,7 +34,7 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
     adr14_pct = float((((high.tail(14) - low.tail(14)) / close.tail(14)) * 100).mean())
     adr20_pct = float((((high.tail(20) - low.tail(20)) / close.tail(20)) * 100).mean())
     adr30_pct = float((((high.tail(30) - low.tail(30)) / close.tail(30)) * 100).mean())
-    adr_pct = adr14_pct  # Keep the current Momentum rule at 14 sessions pending comparison.
+    adr_pct = adr20_pct  # Momentum uses the selected 20-session ADR rule.
     daily_range_pct = ((high - low) / close) * 100
     range_5d = float(daily_range_pct.iloc[-5:].mean())
     range_prior_20d = float(daily_range_pct.iloc[-25:-5].mean())
@@ -97,7 +97,7 @@ print("ADR comparison — number of stocks with ADR >= 3%:")
 print(f"  14 sessions: {int(report['ADR14 >= 3%'].sum()):,}")
 print(f"  20 sessions: {int(report['ADR20 >= 3%'].sum()):,}")
 print(f"  30 sessions: {int(report['ADR30 >= 3%'].sum()):,}")
-print(f"Momentum core matches after ADR (before market cap, RS and sector): {int(report['Momentum core filters (pre-mcap/RS/sector)'].sum()):,}")
+print(f"Momentum core matches after ADR20 (before market cap, RS and sector): {int(report['Momentum core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Momentum + 150% volume: {int(report['Momentum + 150% volume'].sum()):,}")
 print(f"Pullback matches with 5D price-range and volume contraction (before market cap, RS and sector): {int(report['Pullback core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Pullback + 70% volume: {int(report['Pullback + 70% volume'].sum()):,}")
