@@ -209,48 +209,51 @@ if benchmark_return is None:
 report["Nifty 500 6M return (%)"] = benchmark_return
 report["Excess return vs Nifty 500 (%)"] = report["6M return (%)"] - benchmark_return
 
+# Mirror app.py: RS and strong-group context is calculated across all
+# history-qualified, ADR-qualified NSE EQ symbols, before technical/market-cap filters.
+CLASSIFICATION_FILE = ROOT / "industry_classification.csv"
+classification = pd.read_csv(CLASSIFICATION_FILE, dtype={"Symbol": str})
+classification["Symbol"] = classification["Symbol"].astype(str).str.strip().str.upper()
+for col in ["Sector", "Industry", "Basic industry"]:
+    classification[col] = classification[col].fillna("").astype(str).str.strip()
+report = report.merge(
+    classification[["Symbol", "Sector", "Industry", "Basic industry"]],
+    on="Symbol", how="left"
+)
+strength_universe = report[report["ADR >= 3%"]].copy()
+strength_universe["Excess return vs Nifty 500 (%)"] = (
+    strength_universe["6M return (%)"] - benchmark_return
+)
+strength_universe["Universe RS score"] = (
+    strength_universe["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
+).round(1)
+rs_map = strength_universe.set_index("Symbol")["Universe RS score"].to_dict()
+
 def apply_relative_strength_and_sector(frame, technical_column, prefix):
     eligible = frame[frame[technical_column] & frame["Market cap >= ₹1,000 Cr"]].copy()
-    if eligible.empty:
-        frame[f"{prefix} RS score"] = None
-        frame[f"{prefix} strong sector"] = False
-        frame[f"{prefix} final pass"] = False
-        return frame
-
-    eligible["RS"] = (
-        eligible["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
-    ).round(1)
-
-    sector_perf = (
-        eligible[eligible["Yahoo sector"] != "Unknown"]
-        .groupby("Yahoo sector")["6M return (%)"].median()
-    )
-    if sector_perf.empty:
-        strong_names = set()
-        eligible["Sector median 6M return (%)"] = None
-    else:
-        strong_names = set(
-            sector_perf[sector_perf >= sector_perf.quantile(0.70)].index
+    group_column = "Sector"
+    grouped = strength_universe[
+        strength_universe[group_column].notna()
+        & ~strength_universe[group_column].astype(str).str.strip().str.lower().isin(
+            ["", "unknown", "unclassified", "nan"]
         )
-        strong_names = {
-            name for name in strong_names if sector_perf[name] > benchmark_return
-        }
-        eligible["Sector median 6M return (%)"] = eligible["Yahoo sector"].map(sector_perf)
-
-    eligible["Strong sector"] = eligible["Yahoo sector"].isin(strong_names)
-    eligible["Final pass"] = (
-        (eligible["RS"] >= MIN_RS_SCORE) & eligible["Strong sector"]
-    )
-
-    rs_map = eligible.set_index("Symbol")["RS"].to_dict()
-    sector_map = eligible.set_index("Symbol")["Strong sector"].to_dict()
-    median_map = eligible.set_index("Symbol")["Sector median 6M return (%)"].to_dict()
-    final_map = eligible.set_index("Symbol")["Final pass"].to_dict()
-
+    ]
+    group_medians = grouped.groupby(group_column)["6M return (%)"].median()
+    strong_names = set()
+    if not group_medians.empty:
+        strong_names = set(group_medians[
+            (group_medians >= group_medians.quantile(0.70))
+            & (group_medians > benchmark_return)
+        ].index)
     frame[f"{prefix} RS score"] = frame["Symbol"].map(rs_map)
-    frame[f"{prefix} strong sector"] = frame["Symbol"].map(sector_map).fillna(False)
-    frame[f"{prefix} sector median 6M return (%)"] = frame["Symbol"].map(median_map)
-    frame[f"{prefix} final pass"] = frame["Symbol"].map(final_map).fillna(False)
+    frame[f"{prefix} strong sector"] = frame["Sector"].isin(strong_names)
+    frame[f"{prefix} sector median 6M return (%)"] = frame["Sector"].map(group_medians)
+    frame[f"{prefix} final pass"] = (
+        frame[technical_column]
+        & frame["Market cap >= ₹1,000 Cr"]
+        & frame[f"{prefix} RS score"].ge(MIN_RS_SCORE)
+        & frame[f"{prefix} strong sector"]
+    )
     return frame
 
 report = apply_relative_strength_and_sector(
