@@ -1,0 +1,28 @@
+name: Test NSE Full Bhavcopy
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-nse-download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out test branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pandas requests
+      - name: Download and read an actual NSE Full Bhavcopy
+        run: python test_nse_bhavcopy.py
+      - name: Save test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-bhavcopy-test-output
+          path: nse_bhavcopy_test/
+          if-no-files-found: warn
