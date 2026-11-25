@@ -1,5 +1,8 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import math
 import pandas as pd
+import yfinance as yf
 
 ROOT = Path(__file__).parent
 DB = ROOT / "nse_daily_history.csv.gz"
@@ -143,26 +146,145 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
 report = pd.DataFrame(rows)
 if report.empty:
     raise SystemExit("FAIL: no EQ symbols have at least 127 sessions in the NSE database")
+
+# Fetch Yahoo metadata only for technical candidates, matching app.py's metadata stage.
+MIN_MARKET_CAP_CR = 1000.0
+MIN_RS_SCORE = 80.0
+BENCHMARK = "^CRSLDX"
+
+candidate_symbols = set(report.loc[
+    report["Momentum core (pre market-cap/RS/sector)"]
+    | report["Pullback default (all 3 contraction checks)"], "Symbol"
+])
+
+def fetch_metadata(symbol):
+    try:
+        info = yf.Ticker(f"{symbol}.NS").get_info() or {}
+        market_cap = info.get("marketCap")
+        market_cap_cr = float(market_cap) / 1e7 if market_cap else None
+        sector = info.get("sector") or "Unknown"
+        if market_cap_cr is not None and not math.isfinite(market_cap_cr):
+            market_cap_cr = None
+        return symbol, market_cap_cr, sector
+    except Exception:
+        return symbol, None, "Unknown"
+
+metadata = {}
+with ThreadPoolExecutor(max_workers=6) as pool:
+    futures = [pool.submit(fetch_metadata, symbol) for symbol in sorted(candidate_symbols)]
+    for future in as_completed(futures):
+        symbol, market_cap_cr, sector = future.result()
+        metadata[symbol] = (market_cap_cr, sector)
+
+report["Yahoo market cap (₹ Cr)"] = report["Symbol"].map(
+    lambda s: metadata.get(s, (None, "Unknown"))[0]
+)
+report["Yahoo sector"] = report["Symbol"].map(
+    lambda s: metadata.get(s, (None, "Unknown"))[1]
+)
+report["Market cap >= ₹1,000 Cr"] = report["Yahoo market cap (₹ Cr)"].gt(MIN_MARKET_CAP_CR)
+
+benchmark_return = None
+try:
+    benchmark = yf.download(
+        BENCHMARK, period="6mo", interval="1d", auto_adjust=True,
+        progress=False, threads=False, timeout=25
+    )
+    if benchmark is not None and not benchmark.empty:
+        if isinstance(benchmark.columns, pd.MultiIndex):
+            benchmark.columns = benchmark.columns.get_level_values(0)
+        benchmark_close = benchmark["Close"].dropna()
+        if len(benchmark_close) >= 100:
+            benchmark_return = float(
+                (benchmark_close.iloc[-1] / benchmark_close.iloc[0] - 1) * 100
+            )
+except Exception as exc:
+    print(f"Benchmark retrieval warning: {str(exc)[:160]}")
+
+if benchmark_return is None:
+    raise SystemExit("FAIL: Yahoo Nifty 500 proxy (^CRSLDX) benchmark unavailable; RS cannot be validated")
+
+report["Nifty 500 6M return (%)"] = benchmark_return
+report["Excess return vs Nifty 500 (%)"] = report["6M return (%)"] - benchmark_return
+
+def apply_relative_strength_and_sector(frame, technical_column, prefix):
+    eligible = frame[frame[technical_column] & frame["Market cap >= ₹1,000 Cr"]].copy()
+    if eligible.empty:
+        frame[f"{prefix} RS score"] = None
+        frame[f"{prefix} strong sector"] = False
+        frame[f"{prefix} final pass"] = False
+        return frame
+
+    eligible["RS"] = (
+        eligible["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
+    ).round(1)
+
+    sector_perf = (
+        eligible[eligible["Yahoo sector"] != "Unknown"]
+        .groupby("Yahoo sector")["6M return (%)"].median()
+    )
+    if sector_perf.empty:
+        strong_names = set()
+        eligible["Sector median 6M return (%)"] = None
+    else:
+        strong_names = set(
+            sector_perf[sector_perf >= sector_perf.quantile(0.70)].index
+        )
+        strong_names = {
+            name for name in strong_names if sector_perf[name] > benchmark_return
+        }
+        eligible["Sector median 6M return (%)"] = eligible["Yahoo sector"].map(sector_perf)
+
+    eligible["Strong sector"] = eligible["Yahoo sector"].isin(strong_names)
+    eligible["Final pass"] = (
+        (eligible["RS"] >= MIN_RS_SCORE) & eligible["Strong sector"]
+    )
+
+    rs_map = eligible.set_index("Symbol")["RS"].to_dict()
+    sector_map = eligible.set_index("Symbol")["Strong sector"].to_dict()
+    median_map = eligible.set_index("Symbol")["Sector median 6M return (%)"].to_dict()
+    final_map = eligible.set_index("Symbol")["Final pass"].to_dict()
+
+    frame[f"{prefix} RS score"] = frame["Symbol"].map(rs_map)
+    frame[f"{prefix} strong sector"] = frame["Symbol"].map(sector_map).fillna(False)
+    frame[f"{prefix} sector median 6M return (%)"] = frame["Symbol"].map(median_map)
+    frame[f"{prefix} final pass"] = frame["Symbol"].map(final_map).fillna(False)
+    return frame
+
+report = apply_relative_strength_and_sector(
+    report, "Momentum core (pre market-cap/RS/sector)", "Momentum"
+)
+report = apply_relative_strength_and_sector(
+    report, "Pullback default (all 3 contraction checks)", "Pullback"
+)
+
 report = report.sort_values(
-    ["Pullback default (all 3 contraction checks)", "Momentum core (pre market-cap/RS/sector)"],
+    ["Pullback final pass", "Momentum final pass",
+     "Pullback default (all 3 contraction checks)",
+     "Momentum core (pre market-cap/RS/sector)"],
     ascending=False,
 )
 report.to_csv(OUT, index=False)
 
-print("NSE SCANNER VALIDATION — SETTINGS MATCH CURRENT app.py")
+print("NSE SCANNER VALIDATION — TECHNICAL + MARKET CAP + RS + SECTOR")
 print(f"Database date range: {history['DATE'].min().date()} to {history['DATE'].max().date()}")
 print(f"EQ symbols in universe: {len(eq_symbols):,}")
 print(f"EQ symbols with at least {MIN_HISTORY} sessions: {len(report):,}")
 print(f"EQ symbols excluded for insufficient history: {short_history:,}")
 print(f"ADR 14D >= {MIN_ADR_PCT:.1f}%: {int(report['ADR >= 3%'].sum()):,}")
 print(f"Common price/52W-low/30D-turnover filters: {int(report['Common price/low/turnover filters'].sum()):,}")
-print(f"Momentum core matches (before market-cap, RS and sector): {int(report['Momentum core (pre market-cap/RS/sector)'].sum()):,}")
-print(f"Momentum matches with optional >= {MOMENTUM_DAILY_VOLUME_MIN_PCT:.0f}% volume: {int(report['Momentum + optional 150% volume'].sum()):,}")
-print(f"Pullback setups before contraction checks: {int(report['Pullback setup before contraction'].sum()):,}")
-print(f"Pullback matches with all 3 default contraction checks: {int(report['Pullback default (all 3 contraction checks)'].sum()):,}")
-print("Pullback contraction pass breakdown:")
+print(f"Yahoo metadata candidates requested: {len(candidate_symbols):,}")
+print(f"Yahoo metadata candidates with market cap > ₹{MIN_MARKET_CAP_CR:,.0f} Cr: {int(report['Market cap >= ₹1,000 Cr'].sum()):,}")
+print(f"Nifty 500 proxy 6M return: {benchmark_return:.2f}%")
+print(f"Momentum core (pre market-cap/RS/sector): {int(report['Momentum core (pre market-cap/RS/sector)'].sum()):,}")
+print(f"Momentum with optional >= {MOMENTUM_DAILY_VOLUME_MIN_PCT:.0f}% volume: {int(report['Momentum + optional 150% volume'].sum()):,}")
+print(f"Momentum final after market cap + RS >= {MIN_RS_SCORE:.0f} + strong sector: {int(report['Momentum final pass'].sum()):,}")
+print(f"Pullback setups before contraction: {int(report['Pullback setup before contraction'].sum()):,}")
+print(f"Pullback after all 3 default contraction checks: {int(report['Pullback default (all 3 contraction checks)'].sum()):,}")
+print(f"Pullback final after market cap + RS >= {MIN_RS_SCORE:.0f} + strong sector: {int(report['Pullback final pass'].sum()):,}")
+print("Pullback contraction breakdown:")
 print(f"  Latest day volume <= {PULLBACK_DAILY_VOLUME_MAX_PCT:.0f}% of prior 30D average: {int(report['Latest day volume <= 70%'].sum()):,}")
 print(f"  5D average volume < prior 20D average: {int(report['5D volume contracting'].sum()):,}")
 print(f"  5D average daily range < prior 20D average: {int(report['5D price range contracting'].sum()):,}")
 print()
-print("LIMITATIONS: This validates NSE technical filters against the saved bhavcopy database. Market-cap, Yahoo metadata, benchmark-relative RS score, and strong-sector filtering are not included because they require external metadata/benchmark data. The report is a technical pre-filter audit, not a claim that every listed row will appear in the live app.")
+print("AUDIT NOTE: Technical filters use official NSE bhavcopy history. Market cap, sector and benchmark-relative RS use Yahoo Finance metadata/data, matching app.py's current sources and default thresholds. Yahoo metadata may be unavailable for some symbols; those are excluded as in app.py.")
