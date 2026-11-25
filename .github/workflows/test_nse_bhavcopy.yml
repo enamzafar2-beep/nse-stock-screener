@@ -29,6 +29,9 @@ jobs:
           python-version: "3.11"
       - name: Install test dependencies
         run: python -m pip install --upgrade pip pandas requests
+
+      - name: Check scanner Python syntax
+        run: python -m py_compile app.py
       - name: Download and read an actual NSE Full Bhavcopy
         run: python test_nse_bhavcopy.py
       - name: Test historical archive coverage
