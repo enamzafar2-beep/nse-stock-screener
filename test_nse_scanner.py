@@ -5,6 +5,7 @@ ROOT = Path(__file__).parent
 DB = ROOT / "nse_daily_history.csv.gz"
 UNIVERSE = ROOT / "universe.csv"
 OUT = ROOT / "nse_scanner_test_report.csv"
+# Re-run audit whenever the refreshed NSE database changes; latest verified session is reported below.
 
 MIN_HISTORY = 127
 MIN_PRICE = 90.0
