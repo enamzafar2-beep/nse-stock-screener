@@ -1,5 +1,6 @@
 from pathlib import Path
 from io import StringIO
+from difflib import SequenceMatcher
 import pandas as pd
 import requests
 import re
@@ -67,6 +68,40 @@ table = pd.concat([
     name_matches[["Symbol", "Sector", "Industry", "Basic industry", "Mapping source"]],
 ], ignore_index=True).drop_duplicates("Symbol", keep="first")
 table.to_csv(ROOT / "annexure_industry_mapping_test.csv", index=False)
+
+# Exploratory fuzzy candidates for manual review only. These are never auto-mapped.
+candidate_rows = []
+unmapped_names = symbols_frame[symbols_frame[symbol_col].astype(str).str.strip().str.upper().isin(unmapped)].copy()
+source_names = max(tables, key=len).copy()
+source_names["Company_key"] = source_names["Company"].map(norm_name)
+source_names["Ticker"] = source_names["Ticker"].astype(str).str.strip().str.upper()
+source_names = source_names.drop_duplicates("Ticker", keep="first")
+for _, company_row in unmapped_names.iterrows():
+    symbol = str(company_row[symbol_col]).strip().upper()
+    company_name = str(company_row["Company"])
+    key = norm_name(company_name)
+    scored = []
+    for _, source_row in source_names.iterrows():
+        source_key = source_row["Company_key"]
+        if not key or not source_key:
+            continue
+        score = SequenceMatcher(None, key, source_key).ratio()
+        scored.append((score, source_row))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    for score, source_row in scored[:3]:
+        if score >= 0.50:
+            candidate_rows.append({
+                "NSE symbol": symbol,
+                "NSE company name": company_name,
+                "Candidate source ticker": source_row["Ticker"],
+                "Candidate source company": source_row["Company"],
+                "Name similarity": round(score, 3),
+                "Sector": source_row["Sector"],
+                "Industry": source_row["Industry"],
+                "Basic industry": source_row["Basic industry"],
+                "Review status": "MANUAL REVIEW ONLY — NOT MAPPED",
+            })
+pd.DataFrame(candidate_rows).to_csv(ROOT / "annexure_unmapped_name_candidates.csv", index=False)
 
 mapped = set(table["Symbol"])
 unmapped = sorted(symbols - mapped)
