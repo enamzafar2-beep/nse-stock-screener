@@ -223,6 +223,41 @@ report = report.merge(
     classification[["Symbol", "Sector", "Industry", "Basic industry"]],
     on="Symbol", how="left"
 )
+# Sector RS uses every history-qualified NSE EQ constituent, without an ADR
+# floor, so a sector's score is not biased toward high-volatility stocks.
+sector_constituents = report[
+    report["Sector"].notna()
+    & ~report["Sector"].astype(str).str.strip().str.lower().isin(
+        ["", "unknown", "unclassified", "nan"]
+    )
+].copy()
+sector_ranking = sector_constituents.groupby("Sector").agg(
+    Constituents=("Symbol", "nunique"),
+    **{"Median 6M return (%)": ("6M return (%)", "median")}
+).reset_index()
+sector_ranking["Excess return vs Nifty 500 (%)"] = (
+    sector_ranking["Median 6M return (%)"] - benchmark_return
+)
+sector_ranking["Sector RS score"] = (
+    sector_ranking["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100
+).round(1)
+sector_ranking = sector_ranking.sort_values(
+    ["Sector RS score", "Excess return vs Nifty 500 (%)"],
+    ascending=[False, False]
+).reset_index(drop=True)
+sector_map = sector_ranking.set_index("Sector")["Sector RS score"].to_dict()
+sector_median_map = sector_ranking.set_index("Sector")["Median 6M return (%)"].to_dict()
+sector_count_map = sector_ranking.set_index("Sector")["Constituents"].to_dict()
+report["Sector RS score"] = report["Sector"].map(sector_map)
+report["Sector median 6M return (%)"] = report["Sector"].map(sector_median_map)
+report["Sector eligible constituents"] = report["Sector"].map(sector_count_map)
+if not sector_ranking.empty:
+    ordered_scores = sector_ranking["Sector RS score"].tolist()
+    if ordered_scores != sorted(ordered_scores, reverse=True):
+        raise SystemExit("FAIL: Sector RS ranking is not strongest-to-weakest")
+    if not sector_ranking["Sector RS score"].between(0, 100).all():
+        raise SystemExit("FAIL: Sector RS score is outside 0-100")
+
 strength_universe = report[report["ADR >= 2% (Pullback)"]].copy()
 strength_universe["Excess return vs Nifty 500 (%)"] = (
     strength_universe["6M return (%)"] - benchmark_return
@@ -381,6 +416,15 @@ print(f"Common price/52W-low/30D-turnover filters: {int(report['Common price/low
 print(f"Yahoo metadata candidates requested: {len(candidate_symbols):,}")
 print(f"Yahoo metadata candidates with market cap > ₹{MIN_MARKET_CAP_CR:,.0f} Cr: {int(report['Market cap >= ₹1,000 Cr'].sum()):,}")
 print(f"Nifty 500 proxy 6M return: {benchmark_return:.2f}%")
+print(f"Sector RS coverage: {len(sector_ranking):,} sectors / {int(sector_ranking['Constituents'].sum()):,} history-qualified constituents")
+print("Sector RS ranking (strongest first):")
+for _, sector_row in sector_ranking.iterrows():
+    print(
+        f"  {sector_row['Sector']}: score {sector_row['Sector RS score']:.1f}, "
+        f"median 6M {sector_row['Median 6M return (%)']:.2f}%, "
+        f"excess {sector_row['Excess return vs Nifty 500 (%)']:.2f}%, "
+        f"{int(sector_row['Constituents'])} constituents"
+    )
 print(f"Momentum core (pre market-cap/RS/sector): {int(report['Momentum core (pre market-cap/RS/sector)'].sum()):,}")
 print(f"Momentum with optional >= {MOMENTUM_DAILY_VOLUME_MIN_PCT:.0f}% volume: {int(report['Momentum + optional 150% volume'].sum()):,}")
 print(f"Momentum final after market cap + RS >= {MIN_RS_SCORE:.0f} + strong sector: {int(report['Momentum final pass'].sum()):,}")
