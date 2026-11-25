@@ -405,7 +405,7 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
         df = df.sort_values(sort_cols, ascending=[False, False, False], na_position="last")
     return df, errors
 
-def save_daily_results(df, symbols, errors):
+def save_daily_results(df, symbols, errors, scan_type="Momentum"):
     now = pd.Timestamp.now(tz=IST)
     scan_date = now.strftime("%Y-%m-%d")
     saved = df.copy()
@@ -414,19 +414,33 @@ def save_daily_results(df, symbols, errors):
                                       "6M return (%)", "RS score", "As of"])
     saved.insert(0, "Scan date", scan_date)
     saved.insert(1, "Scan time IST", now.strftime("%H:%M:%S"))
+    saved.insert(2, "Scan type", scan_type)
     saved["Symbols checked"] = len(symbols)
     saved["Scan errors"] = len(errors)
     old = pd.read_csv(HISTORY_FILE) if HISTORY_FILE.exists() else pd.DataFrame()
     if not old.empty and "Scan date" in old:
-        old = old[old["Scan date"].astype(str) != scan_date]
+        # Keep Momentum and Pullback records independently for the same session.
+        if "Scan type" not in old:
+            old["Scan type"] = "Momentum"
+        old = old[~((old["Scan date"].astype(str) == scan_date) &
+                    (old["Scan type"].astype(str) == scan_type))]
     pd.concat([old, saved], ignore_index=True).to_csv(HISTORY_FILE, index=False)
 
-# Scheduled GitHub Actions scan retains the original momentum-screen behaviour.
+# Scheduled GitHub Actions runs both independent strategies against the same
+# verified NSE end-of-day database. Each scan is saved separately per date.
 if os.getenv("NSE_DAILY_SCAN") == "1":
     symbols = load_symbols()
-    results, errors = run_scan(symbols, "Momentum")
-    save_daily_results(results, symbols, errors)
-    print(f"Daily momentum scan: {len(symbols)} symbols, {len(results)} matches, {len(errors)} errors")
+    failures = []
+    for daily_scan_type in ("Momentum", "Pullback"):
+        results, errors = run_scan(symbols, daily_scan_type)
+        save_daily_results(results, symbols, errors, daily_scan_type)
+        failures.extend(errors)
+        print(
+            f"Daily {daily_scan_type} scan: {len(symbols)} symbols, "
+            f"{len(results)} matches, {len(errors)} errors"
+        )
+    if failures:
+        print(f"Total data errors across both scans: {len(failures)}")
     raise SystemExit(0)
 
 st.set_page_config(page_title="NSE Strength & EMA Pullback Scanner",
@@ -524,7 +538,7 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
                 min_adr_pct, use_sector_rs_filter, min_sector_rs
             )
             sector_ranking = results.attrs.get("sector_rs_ranking", pd.DataFrame())
-            save_daily_results(results, symbols, errors)
+            save_daily_results(results, symbols, errors, scan_type)
             st.session_state["latest_results"] = results
             st.session_state["latest_sector_rs"] = sector_ranking
             st.session_state["latest_errors"] = errors
