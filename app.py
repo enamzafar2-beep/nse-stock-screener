@@ -19,6 +19,8 @@ ADR_SESSIONS = 14
 MIN_ADR_MOMENTUM_PCT = 3.0
 MIN_ADR_PULLBACK_PCT = 2.0
 
+# The GitHub daily pipeline runs both scan modes and records each separately.
+
 @lru_cache(maxsize=1)
 def load_nse_history():
     if not NSE_HISTORY_FILE.exists():
