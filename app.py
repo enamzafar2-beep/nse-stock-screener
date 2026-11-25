@@ -18,6 +18,7 @@ INDUSTRY_FILE = ROOT / "industry_classification.csv"
 ADR_SESSIONS = 14
 MIN_ADR_MOMENTUM_PCT = 3.0
 MIN_ADR_PULLBACK_PCT = 2.0
+PULLBACK_MAX_VOLUME_PCT = 70.0
 
 # The GitHub daily pipeline runs both scan modes and records each separately.
 
@@ -426,6 +427,18 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
     df["Excess return vs Nifty 500 (%)"] = df["6M return (%)"] - nifty500_return
     df["RS score"] = df["Symbol"].map(rs_map)
     df["Sector RS score"] = df["Sector"].map(sector_rs_map)
+    sector_medians = (sector_ranking.set_index("Sector")["Median 6M return (%)"].to_dict()
+                      if not sector_ranking.empty else {})
+    if sector_ranking.empty:
+        strong_sector_names = set()
+    else:
+        sector_median_cutoff = sector_ranking["Median 6M return (%)"].quantile(0.70)
+        strong_sector_names = set(sector_ranking.loc[
+            (sector_ranking["Median 6M return (%)"] >= sector_median_cutoff)
+            & (sector_ranking["Median 6M return (%)"] > nifty500_return), "Sector"
+        ])
+    df["Sector median 6M return (%)"] = df["Sector"].map(sector_medians)
+    df["Strong sector"] = df["Sector"].isin(strong_sector_names)
     df["Classification group median 6M return (%)"] = df[group_column].map(group_medians)
     df["Strong group"] = df[group_column].isin(strong_names)
     df = df[df["RS score"].notna() & (df["RS score"] >= min_rs)]
@@ -439,7 +452,8 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
         df = df.sort_values(sort_cols, ascending=[False, False, False], na_position="last")
     return df, errors
 
-def save_daily_results(df, symbols, errors, scan_type="Momentum"):
+def save_daily_results(df, symbols, errors, scan_type="Momentum",
+                       volume_filter_enabled=False, volume_threshold_pct=None):
     now = pd.Timestamp.now(tz=IST)
     scan_date = now.strftime("%Y-%m-%d")
     saved = df.copy()
@@ -449,6 +463,11 @@ def save_daily_results(df, symbols, errors, scan_type="Momentum"):
     saved.insert(0, "Scan date", scan_date)
     saved.insert(1, "Scan time IST", now.strftime("%H:%M:%S"))
     saved.insert(2, "Scan type", scan_type)
+    saved["Volume filter enabled"] = bool(volume_filter_enabled)
+    saved["Volume threshold (%)"] = (float(volume_threshold_pct)
+                                      if volume_filter_enabled and volume_threshold_pct is not None else None)
+    saved["5D volume contraction required"] = bool(scan_type == "Pullback" and volume_filter_enabled)
+    saved["5D range contraction required"] = bool(scan_type == "Pullback" and volume_filter_enabled)
     saved["Symbols checked"] = len(symbols)
     saved["Scan errors"] = len(errors)
     old = pd.read_csv(HISTORY_FILE) if HISTORY_FILE.exists() else pd.DataFrame()
@@ -475,8 +494,18 @@ if os.getenv("NSE_DAILY_SCAN") == "1":
         print("IPO / Short History symbols: " +
               ", ".join(ipo_short_history["Symbol"].tolist()))
     for daily_scan_type in ("Momentum", "Pullback"):
-        results, errors = run_scan(symbols, daily_scan_type)
-        save_daily_results(results, symbols, errors, daily_scan_type)
+        daily_volume_filter = daily_scan_type == "Pullback"
+        daily_volume_threshold = PULLBACK_MAX_VOLUME_PCT if daily_scan_type == "Pullback" else 150.0
+        results, errors = run_scan(
+            symbols, daily_scan_type,
+            use_volume_filter=daily_volume_filter,
+            volume_threshold_pct=daily_volume_threshold
+        )
+        save_daily_results(
+            results, symbols, errors, daily_scan_type,
+            volume_filter_enabled=daily_volume_filter,
+            volume_threshold_pct=daily_volume_threshold
+        )
         failures.extend(errors)
         print(
             f"Daily {daily_scan_type} scan: {len(symbols)} symbols, "
@@ -544,7 +573,7 @@ with st.sidebar:
         )
         volume_threshold_pct = st.number_input(
             "Maximum today's volume (% of prior 30-day average)",
-            min_value=10.0, max_value=100.0, value=70.0, step=5.0,
+            min_value=10.0, max_value=100.0, value=PULLBACK_MAX_VOLUME_PCT, step=5.0,
             disabled=not use_volume_filter
         )
     else:
@@ -581,7 +610,11 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
                 min_adr_pct, use_sector_rs_filter, min_sector_rs
             )
             sector_ranking = results.attrs.get("sector_rs_ranking", pd.DataFrame())
-            save_daily_results(results, symbols, errors, scan_type)
+            save_daily_results(
+                results, symbols, errors, scan_type,
+                volume_filter_enabled=use_volume_filter,
+                volume_threshold_pct=volume_threshold_pct
+            )
             st.session_state["latest_results"] = results
             st.session_state["latest_sector_rs"] = sector_ranking
             st.session_state["latest_errors"] = errors
