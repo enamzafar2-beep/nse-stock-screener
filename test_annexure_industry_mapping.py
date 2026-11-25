@@ -2,6 +2,7 @@ from pathlib import Path
 from io import StringIO
 import pandas as pd
 import requests
+import re
 
 ROOT = Path(__file__).parent
 UNIVERSE = pd.read_csv(ROOT / "universe.csv")
@@ -30,11 +31,41 @@ if not set(required).issubset(table.columns):
 table["Ticker"] = table["Ticker"].astype(str).str.strip().str.upper()
 for c in ["Sector", "Industry", "Basic industry"]:
     table[c] = table[c].astype(str).str.strip()
-table = table[table["Ticker"].isin(symbols)].copy()
-table = table.drop_duplicates("Ticker", keep="first")
-table = table.rename(columns={"Ticker": "Symbol"})
-table["Mapping source"] = "The Annexure / BSE equity metadata reference"
-table = table[["Symbol", "Sector", "Industry", "Basic industry", "Mapping source"]]
+
+# Pass 1: exact ticker. Pass 2: exact normalized company-name match only;
+# ambiguous or fuzzy matches are deliberately not assigned.
+def norm_name(value):
+    value = re.sub(r"[^A-Z0-9]+", " ", str(value).upper()).strip()
+    value = re.sub(r"\\b(LIMITED|LTD|PRIVATE|PVT|PUBLIC|PLC|INDIA)\\b", " ", value)
+    return " ".join(value.split())
+
+table["Company_key"] = table["Company"].map(norm_name)
+symbols_frame["Symbol_key"] = symbols_frame[symbol_col].astype(str).str.strip().str.upper()
+ticker_matches = table[table["Ticker"].isin(symbols)].drop_duplicates("Ticker", keep="first").copy()
+ticker_matches["Symbol"] = ticker_matches["Ticker"]
+ticker_matches["Mapping source"] = "The Annexure / BSE equity metadata reference (exact ticker)"
+covered = set(ticker_matches["Symbol"])
+
+if "Company" in symbols_frame.columns:
+    universe_names = symbols_frame[[symbol_col, "Company"]].copy()
+    universe_names["Company_key"] = universe_names["Company"].map(norm_name)
+    source_name_counts = table.groupby("Company_key")["Ticker"].nunique()
+    universe_name_counts = universe_names.groupby("Company_key")[symbol_col].nunique()
+    unique_keys = set(source_name_counts[source_name_counts == 1].index) & set(universe_name_counts[universe_name_counts == 1].index)
+    name_candidates = universe_names[universe_names["Company_key"].isin(unique_keys)].merge(
+        table, on="Company_key", how="inner", suffixes=("_nse", "_source")
+    )
+    name_candidates = name_candidates[~name_candidates[symbol_col].isin(covered)].copy()
+    name_candidates["Symbol"] = name_candidates[symbol_col].astype(str).str.strip().str.upper()
+    name_candidates["Mapping source"] = "The Annexure / BSE equity metadata reference (unique exact normalized company name)"
+    name_matches = name_candidates[name_candidates["Symbol"].isin(symbols)]
+else:
+    name_matches = pd.DataFrame(columns=["Symbol", "Sector", "Industry", "Basic industry", "Mapping source"])
+
+table = pd.concat([
+    ticker_matches[["Symbol", "Sector", "Industry", "Basic industry", "Mapping source"]],
+    name_matches[["Symbol", "Sector", "Industry", "Basic industry", "Mapping source"]],
+], ignore_index=True).drop_duplicates("Symbol", keep="first")
 table.to_csv(ROOT / "annexure_industry_mapping_test.csv", index=False)
 
 mapped = set(table["Symbol"])
