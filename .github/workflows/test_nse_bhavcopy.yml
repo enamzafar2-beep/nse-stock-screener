@@ -1,6 +1,8 @@
 name: Test NSE Full Bhavcopy
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - "test/nse-bhavcopy-download"
 
 permissions:
   contents: read
