@@ -14,6 +14,7 @@ UNIVERSE_FILE = ROOT / "universe.csv"
 IST = "Asia/Kolkata"
 BENCHMARK = "^CRSLDX"  # Yahoo Finance proxy for Nifty 500; NSE stock OHLCV comes from the local database
 NSE_HISTORY_FILE = ROOT / "nse_daily_history.csv.gz"
+INDUSTRY_FILE = ROOT / "industry_classification.csv"
 ADR_SESSIONS = 14
 MIN_ADR_PCT = 3.0
 
@@ -48,6 +49,23 @@ def load_symbols():
             pass
     return ["RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY", "TCS",
             "LT", "BEL", "HAL", "MAZDOCK", "CDSL", "MCX"]
+
+@lru_cache(maxsize=1)
+def load_industry_classification():
+    if not INDUSTRY_FILE.exists():
+        raise FileNotFoundError("Industry classification database industry_classification.csv is missing.")
+    frame = pd.read_csv(INDUSTRY_FILE, dtype={"Symbol": str})
+    required = {"Symbol", "Sector", "Industry", "Basic industry"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"Industry classification database is missing columns: {sorted(missing)}")
+    frame["Symbol"] = frame["Symbol"].astype(str).str.strip().str.upper()
+    if frame["Symbol"].duplicated().any():
+        duplicates = frame.loc[frame["Symbol"].duplicated(), "Symbol"].head(10).tolist()
+        raise ValueError(f"Duplicate symbols in industry classification database: {duplicates}")
+    for column in ("Sector", "Industry", "Basic industry"):
+        frame[column] = frame[column].fillna("").astype(str).str.strip()
+    return frame.set_index("Symbol")[["Sector", "Industry", "Basic industry"]].to_dict("index")
 
 def download_history(symbol):
     # Prices, volume and turnover are sourced from the verified NSE bhavcopy database.
@@ -160,7 +178,10 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         market_cap_cr = float(market_cap) / 1e7 if market_cap else None
         if market_cap_cr is None or market_cap_cr <= min_mcap:
             return None, None
-        sector = info.get("sector") or "Unknown"
+        classification = load_industry_classification().get(str(symbol).strip().upper(), {})
+        sector = classification.get("Sector") or "Unclassified"
+        industry = classification.get("Industry") or "Unclassified"
+        basic_industry = classification.get("Basic industry") or "Unclassified"
         peg = info.get("pegRatio")
         try:
             peg = float(peg) if peg is not None else None
@@ -200,6 +221,8 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
                 if prior_20d_avg_range_pct > 0 else None,
             "30D avg turnover (₹ Cr)": avg_turnover_cr,
             "Sector": sector,
+            "Industry": industry,
+            "Basic industry": basic_industry,
             "PEG": peg,
             "EMA match": ", ".join(str(n) for n, matched in ((20, near_ema20), (50, near_ema50)) if matched)
                          if (near_ema20 or near_ema50) else "—",
@@ -215,7 +238,8 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
              min_above_low=1.5, min_turnover=7, min_rs=80,
              strong_sector_only=True, proximity=2, use_peg=False,
              max_peg=2.0, workers=6, use_volume_filter=False,
-             volume_threshold_pct=None):
+             volume_threshold_pct=None, classification_level="Sector",
+             selected_sectors=None, selected_industries=None):
     if volume_threshold_pct is None:
         volume_threshold_pct = 70.0 if scan_type == "Pullback" else 150.0
     rows, errors = [], []
@@ -236,6 +260,12 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
     df = pd.DataFrame(rows)
     if df.empty:
         return df, errors
+    if selected_sectors:
+        df = df[df["Sector"].isin(selected_sectors)]
+    if selected_industries:
+        df = df[df["Industry"].isin(selected_industries)]
+    if df.empty:
+        return df, errors
 
     nifty500_return = benchmark_return()
     df["Nifty 500 6M return (%)"] = nifty500_return
@@ -245,18 +275,23 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
 
     df["Excess return vs Nifty 500 (%)"] = df["6M return (%)"] - nifty500_return
     df["RS score"] = (df["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100).round(1)
-    sector_perf = df[df["Sector"] != "Unknown"].groupby("Sector")["6M return (%)"].median()
-    if not sector_perf.empty:
-        strong_names = set(sector_perf[sector_perf >= sector_perf.quantile(0.70)].index)
-        strong_names = {name for name in strong_names if sector_perf[name] > nifty500_return}
-        df["Sector median 6M return (%)"] = df["Sector"].map(sector_perf)
-        df["Strong sector"] = df["Sector"].isin(strong_names)
+    group_column = classification_level if classification_level in ("Sector", "Industry", "Basic industry") else "Sector"
+    eligible_groups = df[
+        df[group_column].notna() &
+        ~df[group_column].astype(str).str.strip().str.lower().isin(["", "unknown", "unclassified", "nan"])
+    ]
+    group_perf = eligible_groups.groupby(group_column)["6M return (%)"].median()
+    if not group_perf.empty:
+        strong_names = set(group_perf[group_perf >= group_perf.quantile(0.70)].index)
+        strong_names = {name for name in strong_names if group_perf[name] > nifty500_return}
+        df["Classification group median 6M return (%)"] = df[group_column].map(group_perf)
+        df["Strong group"] = df[group_column].isin(strong_names)
     else:
-        df["Sector median 6M return (%)"] = None
-        df["Strong sector"] = False
+        df["Classification group median 6M return (%)"] = None
+        df["Strong group"] = False
     df = df[df["RS score"] >= min_rs]
     if strong_sector_only:
-        df = df[df["Strong sector"]]
+        df = df[df["Strong group"]]
     if not df.empty:
         sort_cols = ["RS score", "Prior 6M swing advance (%)", "30D avg turnover (₹ Cr)"]
         df = df.sort_values(sort_cols, ascending=[False, False, False], na_position="last")
@@ -302,7 +337,17 @@ with st.sidebar:
     min_above_low = st.number_input("Minimum price / 52-week low", min_value=1.0, value=1.5, step=0.1)
     min_turnover = st.number_input("Minimum 30-day average turnover (₹ crore)", min_value=0.0, value=7.0, step=1.0)
     min_rs = st.slider("Minimum Relative Strength score", 0, 100, 80)
-    strong_sector_only = st.checkbox("Only strong sectors", value=True)
+    strong_sector_only = st.checkbox("Only strong groups", value=True)
+    classification_level = st.selectbox(
+        "Classification level for strength filter",
+        ["Sector", "Industry", "Basic industry"],
+        index=0
+    )
+    classification_data = load_industry_classification()
+    sector_options = sorted({v["Sector"] for v in classification_data.values() if v["Sector"] and v["Sector"] != "Unclassified"})
+    industry_options = sorted({v["Industry"] for v in classification_data.values() if v["Industry"] and v["Industry"] != "Unclassified"})
+    selected_sectors = st.multiselect("Limit to sectors (empty = all)", sector_options, default=[])
+    selected_industries = st.multiselect("Limit to industries (empty = all)", industry_options, default=[])
     st.header("EMA pullback settings")
     proximity = st.number_input("Distance from EMA20/EMA50 (%)", min_value=0.5, max_value=8.0,
                                 value=2.0, step=0.5)
@@ -337,6 +382,9 @@ with st.sidebar:
 st.subheader("1. NSE universe")
 symbols = load_symbols()
 st.write(f"**{len(symbols):,} symbols loaded** from `universe.csv`.")
+classification_count = len(load_industry_classification())
+classified_universe = sum(1 for symbol in symbols if symbol in load_industry_classification())
+st.caption(f"Sector / industry classification: {classified_universe:,} of {len(symbols):,} loaded symbols ({classified_universe / max(len(symbols), 1) * 100:.1f}%).")
 if st.button("↻ Reload saved NSE universe", use_container_width=True):
     st.rerun()
 if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=True):
@@ -347,7 +395,8 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
             results, errors = run_scan(
                 symbols, scan_type, min_mcap, min_return, min_price, min_above_low,
                 min_turnover, min_rs, strong_sector_only, proximity, use_peg,
-                max_peg, workers, use_volume_filter, volume_threshold_pct
+                max_peg, workers, use_volume_filter, volume_threshold_pct,
+                classification_level, selected_sectors, selected_industries
             )
             save_daily_results(results, symbols, errors)
             st.session_state["latest_results"] = results
@@ -403,7 +452,7 @@ st.markdown("""
 - **Pullback mode:** does not require the current six-month return to remain above 50%. Instead, the stock must have made at least a 50% rise from its six-month low to its six-month high, have a rising EMA50, and be within the chosen distance (2% by default) of EMA20 or EMA50 while remaining no more than 2% below EMA50.
 - **Pullback labels:** “Near EMA support” means the stock is in the pullback zone. “Pullback turning up” means the latest close is above the previous close and above the day's open. These are screening labels, not confirmed buy signals.
 - **Relative Strength:** percentile rank of six-month excess return versus the Nifty 500 proxy series `^CRSLDX`, among stocks that pass the selected scan's initial filters.
-- **Strong sectors:** sectors whose median six-month return is in the top 30% of available sectors and exceeds the benchmark return.
+- **Sector and industry classification:** sourced from the reviewed `industry_classification.csv` database. Optional sector and industry selections narrow the universe; the strong-group filter can evaluate Sector, Industry, or Basic industry median six-month returns (top 30% and above the benchmark).
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
 - **ADR:** average daily high-low range as a percentage of close over 14 sessions; stocks below 3% are excluded in both scan modes. This is a historical volatility eligibility filter, not a requirement for today's pullback candle.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
