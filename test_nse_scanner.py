@@ -16,7 +16,8 @@ MIN_HISTORY = 127
 MIN_PRICE = 90.0
 MIN_ABOVE_52W_LOW = 1.5
 MIN_TURNOVER_CR = 7.0
-MIN_ADR_PCT = 3.0
+MIN_ADR_MOMENTUM_PCT = 3.0
+MIN_ADR_PULLBACK_PCT = 2.0
 ADR_SESSIONS = 14
 EMA_PROXIMITY_PCT = 2.0
 PULLBACK_DAILY_VOLUME_MAX_PCT = 70.0
@@ -97,15 +98,16 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
         prior_advance >= 50 and ema50_rising and (near_ema20 or near_ema50) and holding_ema50
     )
 
-    adr_pass = pd.notna(adr14_pct) and adr14_pct >= MIN_ADR_PCT
+    momentum_adr_pass = pd.notna(adr14_pct) and adr14_pct >= MIN_ADR_MOMENTUM_PCT
+    pullback_adr_pass = pd.notna(adr14_pct) and adr14_pct >= MIN_ADR_PULLBACK_PCT
     common_pass = (
         last > MIN_PRICE and low_52w > 0
         and last / low_52w >= MIN_ABOVE_52W_LOW
         and avg_turnover >= MIN_TURNOVER_CR
     )
-    momentum_core = adr_pass and common_pass and ret_6m >= 50
+    momentum_core = momentum_adr_pass and common_pass and ret_6m >= 50
     momentum_with_150_volume = momentum_core and volume_ratio_pct >= MOMENTUM_DAILY_VOLUME_MIN_PCT
-    pullback_setup_before_contraction = adr_pass and common_pass and pullback_setup
+    pullback_setup_before_contraction = pullback_adr_pass and common_pass and pullback_setup
     pullback_default = pullback_setup_before_contraction and pullback_volume_and_price_contracting
 
     rows.append({
@@ -118,7 +120,8 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
         "Price / 52W low (x)": last / low_52w if low_52w > 0 else None,
         "30D avg NSE turnover (₹ Cr)": avg_turnover,
         "ADR 14D (%)": adr14_pct,
-        "ADR >= 3%": adr_pass,
+        "ADR >= 3% (Momentum)": momentum_adr_pass,
+        "ADR >= 2% (Pullback)": pullback_adr_pass,
         "Latest volume": int(latest_volume),
         "Today's volume vs prior 30D avg (%)": volume_ratio_pct,
         "5D avg volume": avg_volume_5d,
@@ -220,7 +223,7 @@ report = report.merge(
     classification[["Symbol", "Sector", "Industry", "Basic industry"]],
     on="Symbol", how="left"
 )
-strength_universe = report[report["ADR >= 3%"]].copy()
+strength_universe = report[report["ADR >= 2% (Pullback)"]].copy()
 strength_universe["Excess return vs Nifty 500 (%)"] = (
     strength_universe["6M return (%)"] - benchmark_return
 )
@@ -372,7 +375,8 @@ print(f"Database date range: {history['DATE'].min().date()} to {history['DATE'].
 print(f"EQ symbols in universe: {len(eq_symbols):,}")
 print(f"EQ symbols with at least {MIN_HISTORY} sessions: {len(report):,}")
 print(f"EQ symbols excluded for insufficient history: {short_history:,}")
-print(f"ADR 14D >= {MIN_ADR_PCT:.1f}%: {int(report['ADR >= 3%'].sum()):,}")
+print(f"ADR 14D >= {MIN_ADR_MOMENTUM_PCT:.1f}% (Momentum): {int(report['ADR >= 3% (Momentum)'].sum()):,}")
+print(f"ADR 14D >= {MIN_ADR_PULLBACK_PCT:.1f}% (Pullback/shared RS universe): {int(report['ADR >= 2% (Pullback)'].sum()):,}")
 print(f"Common price/52W-low/30D-turnover filters: {int(report['Common price/low/turnover filters'].sum()):,}")
 print(f"Yahoo metadata candidates requested: {len(candidate_symbols):,}")
 print(f"Yahoo metadata candidates with market cap > ₹{MIN_MARKET_CAP_CR:,.0f} Cr: {int(report['Market cap >= ₹1,000 Cr'].sum()):,}")
