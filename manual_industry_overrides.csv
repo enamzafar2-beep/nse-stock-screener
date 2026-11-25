@@ -7,7 +7,7 @@ ARHAM,Consumer Durables,Consumer Durables,Consumer Electronics,https://arhamtech
 BETA,Healthcare,Pharmaceuticals & Biotechnology,Pharmaceuticals,https://www.betadrugslimited.com/about-us/,Manufactures oncology medicines and formulations.
 BOHRAIND,Chemicals,Fertilizers & Agrochemicals,Fertilizers,https://www.bohraindustries.com/aboutus.html,Phosphatic fertiliser manufacturing is core activity.
 BSE,Financial Services,Capital Markets,Exchange and Data Platform,https://www.bseindia.com/,Stock exchange and capital-market platform.
-CDSL,Financial Services,Capital Markets,Depositories, Clearing Houses and Other Intermediaries,https://www.cdslindia.com/About/OurBusiness.aspx,Securities depository and demat custody business.
+CDSL,Financial Services,Capital Markets,"Depositories, Clearing Houses and Other Intermediaries",https://www.cdslindia.com/About/OurBusiness.aspx,Securities depository and demat custody business.
 CROWN,Services,Commercial Services & Supplies,Diversified Commercial Services,https://crownlifters.com/invester-center/,Company filing identifies crane renting business.
 DANGEE,Fast Moving Consumer Goods,Food Products,Packaged Foods,https://dangeedums.biz/about/,Manufactures and sells cakes pastries and bakery products.
 EIFFL,Fast Moving Consumer Goods,Food Products,Packaged Foods,https://archives.nseindia.com/annual_reports/AR_31916_EIFFL_2025_2026_A_20102841_08092026190451.pdf,NSE annual report describes packaged snacks and beverages.
@@ -32,7 +32,7 @@ MMP,Metals & Mining,Non - Ferrous Metals,Aluminium,https://mmpil.com/our-activit
 NBIFIN,Financial Services,Finance,Non Banking Financial Company (NBFC),https://nbi-india.co.in/profile.shtml,NBFC engaged mainly in investment in shares and securities.
 NDGL,Financial Services,Finance,Investment Company,https://nagadhunserigroup.com/about_company.html,Principal business is investment in shares and securities.
 OSWALSEEDS,Fast Moving Consumer Goods,Agricultural Food & other Products,Other Agricultural Products,https://oswalseeds.com/,Produces and exports agricultural seeds and commodities.
-PANSARI,Realty,Realty,Residential, Commercial Projects,https://www.pansaridevelopers.com/corporate-information,Residential and commercial real-estate development.
+PANSARI,Realty,Realty,"Residential, Commercial Projects",https://www.pansaridevelopers.com/corporate-information,Residential and commercial real-estate development.
 PRECOT,Textiles,Textiles & Apparels,Other Textile Products,https://precot.com/,Cotton yarn and cotton-based textile manufacturing.
 PRITI,Consumer Durables,Consumer Durables,Furniture, Home Furnishing,https://pritiinternational.com/about-us,Manufactures and exports solid-wood furniture and home furnishings.
 RAJMET,Metals & Mining,Non - Ferrous Metals,Copper,https://rajnandinimetal.com/,Manufactures copper rods wires and cables.
@@ -42,7 +42,7 @@ SAKAR,Healthcare,Pharmaceuticals & Biotechnology,Pharmaceuticals,https://sakarhe
 SALONA,Textiles,Textiles & Apparels,Other Textile Products,https://nsearchives.nseindia.com/corporate/SALONA_29082025185931_Annual_Report.pdf,Annual report lists cotton yarn knitted fabrics and garments.
 SERVOTECH,Capital Goods,Electrical Equipment,Other Electrical Equipment,https://www.servotech.in/our-company,Manufactures EV chargers solar products inverters and batteries.
 SHANTI,Fast Moving Consumer Goods,Agricultural Food & other Products,Other Agricultural Products,https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_187676_14082026193750_iXBRL_WEB.html,NSE filing identifies agriculture as its single segment.
-SHRADHA,Realty,Realty,Residential, Commercial Projects,https://nsearchives.nseindia.com/corporate/SHRADHA_03022026172427_SHRADHA_UPDATE_moa_aoa.pdf,Company memorandum describes real-estate development.
+SHRADHA,Realty,Realty,"Residential, Commercial Projects",https://nsearchives.nseindia.com/corporate/SHRADHA_03022026172427_SHRADHA_UPDATE_moa_aoa.pdf,Company memorandum describes real-estate development.
 SHUKRAMED,Healthcare,Healthcare Equipment & Supplies,Medical Equipment & Supplies,https://shukramedtechltd.com/portfolio/medtech,Company portfolio covers medical technologies devices diagnostics and surgical solutions.
 SILGO,Consumer Services,Retailing,Speciality Retail,https://silgo.in/investors/business-overview/,Designs manufactures retails and wholesales silver jewellery.
 SINTERCOM,Automobile and Auto Components,Auto Components,Auto Components & Equipments,https://sintercom.co.in/assets/docs/2026/09/Annual-Report-FY2025-26.pdf,Annual report states manufacture of sintered metal and automotive components.
@@ -55,5 +55,5 @@ VARDHACRLC,Textiles,Textiles & Apparels,Other Textile Products,https://www.vardh
 VERTOZ,Information Technology,IT - Services,Web based media and service,https://nsearchives.nseindia.com/annual_reports/AR_31800_VERTOZ_2025_2026_A_71340162_07092026211802.pdf,Annual report describes digital advertising cloud hosting and IT-enabled services.
 VITAL,Chemicals,Chemicals & Petrochemicals,Specialty Chemicals,https://www.vitalchemtech.com/,Manufactures phosphorus derivatives and speciality chemicals.
 VIVIANA,Power,Power,Power - Transmission,https://nsearchives.nseindia.com/annual_reports/AR_31534_VIVIANA_2025_2026_A_7497241_05092026162340.pdf,Annual report describes power transmission and distribution EPC projects.
-WIPL,Forest Materials,Paper, Forest & Jute Products,Plywood Boards/Laminates,https://wipltd.in/,Manufactures plywood and wood-based panel products.
+WIPL,Forest Materials,"Paper, Forest & Jute Products",Plywood Boards/Laminates,https://wipltd.in/,Manufactures plywood and wood-based panel products.
 ZOTA,Healthcare,Pharmaceuticals & Biotechnology,Pharmaceuticals,https://www.zotahealthcare.com/about-us/our-business-2/,Manufactures trades exports and retails pharmaceutical products.
