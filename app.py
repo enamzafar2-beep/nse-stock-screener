@@ -60,7 +60,7 @@ def benchmark_return():
 
 def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
                    min_above_low, min_turnover, proximity, use_peg, max_peg,
-                   require_volume_expansion, min_volume_ratio):
+                   use_volume_filter, volume_threshold_pct):
     try:
         hist = download_history(symbol)
         if hist is None or len(hist) < 127:
@@ -70,7 +70,6 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         low = series(hist, "Low").reindex(close.index)
         open_price = series(hist, "Open").reindex(close.index)
         volume = series(hist, "Volume").reindex(close.index).fillna(0)
-
         last = float(close.iloc[-1])
         low_52w = float(low.tail(252).min())
         ret_6m = float((last / float(close.iloc[-127]) - 1) * 100)
@@ -78,20 +77,27 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         latest_volume = int(volume.iloc[-1])
         avg_volume_30d = int(volume.tail(30).mean())
         prior_30d_avg_volume = float(volume.iloc[-31:-1].mean())
-        volume_ratio = (latest_volume / prior_30d_avg_volume) if prior_30d_avg_volume > 0 else 0.0
-        if require_volume_expansion and volume_ratio * 100 < min_volume_ratio:
-            return None, None
+        volume_ratio_pct = (
+            latest_volume / prior_30d_avg_volume * 100
+            if prior_30d_avg_volume > 0 else 0.0
+        )
+
+        # Pullbacks prefer quieter volume; momentum prefers expanding volume.
+        if use_volume_filter:
+            if scan_type == "Pullback" and volume_ratio_pct > volume_threshold_pct:
+                return None, None
+            if scan_type == "Momentum" and volume_ratio_pct < volume_threshold_pct:
+                return None, None
+
         if last <= min_price or low_52w <= 0 or last / low_52w < min_above_low:
             return None, None
         if avg_turnover_cr < min_turnover:
             return None, None
-
         # EMA calculations use end-of-day adjusted closing prices.
         ema = {n: close.ewm(span=n, adjust=False).mean() for n in (10, 20, 50)}
         ema_values = {n: float(v.iloc[-1]) for n, v in ema.items()}
         ema_near = [n for n, value in ema_values.items()
                     if abs(last / value - 1) * 100 <= proximity]
-
         # Pullback qualification: a substantial prior six-month advance,
         # rising EMA50, price holding close to EMA20/EMA50, and not deeply
         # below EMA50. This deliberately does NOT require today's 6M return
@@ -105,13 +111,11 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
         holding_ema50 = last >= ema_values[50] * 0.98
         pullback_ok = (prior_advance_pct >= 50 and ema50_rising and
                        (near_ema20 or near_ema50) and holding_ema50)
-
         if scan_type == "Momentum":
             if ret_6m < min_return:
                 return None, None
         elif not pullback_ok:
             return None, None
-
         ticker = yf.Ticker(f"{symbol}.NS")
         info = ticker.get_info() or {}
         market_cap = info.get("marketCap")
@@ -128,7 +132,6 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             peg = None
         if use_peg and (peg is None or peg > max_peg):
             return None, None
-
         if scan_type == "Pullback":
             # A first-pass recovery label, not a guaranteed reversal signal.
             turning_up = (last > float(close.iloc[-2]) and
@@ -136,7 +139,6 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             setup = "Pullback turning up" if turning_up else "Near EMA support"
         else:
             setup = "Momentum"
-
         return {
             "Symbol": symbol,
             "Setup": setup,
@@ -148,7 +150,7 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
             "Above 52W low (x)": last / low_52w,
             "Latest volume (shares)": latest_volume,
             "30D avg volume (shares)": avg_volume_30d,
-            "Today's volume vs prior 30D avg (%)": round(volume_ratio * 100, 1),
+            "Today's volume vs prior 30D avg (%)": round(volume_ratio_pct, 1),
             "30D avg turnover (₹ Cr)": avg_turnover_cr,
             "Sector": sector,
             "PEG": peg,
@@ -165,15 +167,17 @@ def inspect_symbol(symbol, scan_type, min_mcap, min_return, min_price,
 def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
              min_above_low=1.5, min_turnover=7, min_rs=80,
              strong_sector_only=True, proximity=2, use_peg=False,
-             max_peg=2.0, workers=6, require_volume_expansion=False,
-             min_volume_ratio=150.0):
+             max_peg=2.0, workers=6, use_volume_filter=False,
+             volume_threshold_pct=None):
+    if volume_threshold_pct is None:
+        volume_threshold_pct = 70.0 if scan_type == "Pullback" else 150.0
     rows, errors = [], []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(inspect_symbol, symbol, scan_type, min_mcap, min_return,
                         min_price, min_above_low, min_turnover, proximity,
-                        use_peg, max_peg, require_volume_expansion,
-                        min_volume_ratio): symbol
+                        use_peg, max_peg, use_volume_filter,
+                        volume_threshold_pct): symbol
             for symbol in symbols
         }
         for future in as_completed(futures):
@@ -182,7 +186,6 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
                 rows.append(row)
             if err:
                 errors.append(err)
-
     df = pd.DataFrame(rows)
     if df.empty:
         return df, errors
@@ -195,7 +198,6 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
 
     df["Excess return vs Nifty 500 (%)"] = df["6M return (%)"] - nifty500_return
     df["RS score"] = (df["Excess return vs Nifty 500 (%)"].rank(pct=True) * 100).round(1)
-
     sector_perf = df[df["Sector"] != "Unknown"].groupby("Sector")["6M return (%)"].median()
     if not sector_perf.empty:
         strong_names = set(sector_perf[sector_perf >= sector_perf.quantile(0.70)].index)
@@ -205,7 +207,6 @@ def run_scan(symbols, scan_type, min_mcap=1000, min_return=50, min_price=90,
     else:
         df["Sector median 6M return (%)"] = None
         df["Strong sector"] = False
-
     df = df[df["RS score"] >= min_rs]
     if strong_sector_only:
         df = df[df["Strong sector"]]
@@ -242,7 +243,6 @@ st.set_page_config(page_title="NSE Strength & EMA Pullback Scanner",
                    page_icon="📈", layout="wide")
 st.title("📈 NSE Strength & EMA Pullback Scanner")
 st.caption("End-of-day research scanner for swing and positional setups. Not a live intraday scanner.")
-
 with st.sidebar:
     st.header("Scanner type")
     scan_type = st.radio("Choose what to find", ["Momentum", "Pullback"],
@@ -261,16 +261,30 @@ with st.sidebar:
                                 value=2.0, step=0.5)
     use_peg = st.checkbox("Enable PEG filter (missing PEG values excluded)", value=False)
     max_peg = st.number_input("Maximum PEG ratio", min_value=0.1, value=2.0, step=0.1)
-    st.header("Volume expansion")
-    require_volume_expansion = st.checkbox(
-        "Require today's volume expansion (optional)", value=False,
-        help="When enabled, today's volume must be at least the selected multiple of the previous 30 trading days' average volume."
-    )
-    min_volume_ratio = st.number_input(
-        "Minimum today's volume (% of prior 30-day average)", min_value=100.0,
-        max_value=500.0, value=150.0, step=10.0,
-        disabled=not require_volume_expansion
-    )
+
+    st.header("Volume confirmation")
+    if scan_type == "Pullback":
+        use_volume_filter = st.checkbox(
+            "Require lower-than-average pullback volume (optional)",
+            value=False,
+            help="When enabled, today's volume must be no more than the selected percentage of the previous 30 trading days' average."
+        )
+        volume_threshold_pct = st.number_input(
+            "Maximum today's volume (% of prior 30-day average)",
+            min_value=10.0, max_value=100.0, value=70.0, step=5.0,
+            disabled=not use_volume_filter
+        )
+    else:
+        use_volume_filter = st.checkbox(
+            "Require momentum volume expansion (optional)",
+            value=False,
+            help="When enabled, today's volume must be at least the selected percentage of the previous 30 trading days' average."
+        )
+        volume_threshold_pct = st.number_input(
+            "Minimum today's volume (% of prior 30-day average)",
+            min_value=100.0, max_value=500.0, value=150.0, step=10.0,
+            disabled=not use_volume_filter
+        )
     workers = st.slider("Concurrent requests", 1, 12, 6)
 
 st.subheader("1. NSE universe")
@@ -278,7 +292,6 @@ symbols = load_symbols()
 st.write(f"**{len(symbols):,} symbols loaded** from `universe.csv`.")
 if st.button("↻ Reload saved NSE universe", use_container_width=True):
     st.rerun()
-
 if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=True):
     if not symbols:
         st.warning("No symbols found. Check universe.csv in your GitHub repository.")
@@ -287,7 +300,7 @@ if st.button("🔎 Run end-of-day scanner", type="primary", use_container_width=
             results, errors = run_scan(
                 symbols, scan_type, min_mcap, min_return, min_price, min_above_low,
                 min_turnover, min_rs, strong_sector_only, proximity, use_peg,
-                max_peg, workers, require_volume_expansion, min_volume_ratio
+                max_peg, workers, use_volume_filter, volume_threshold_pct
             )
             save_daily_results(results, symbols, errors)
             st.session_state["latest_results"] = results
@@ -346,7 +359,7 @@ st.markdown("""
 - **Strong sectors:** sectors whose median six-month return is in the top 30% of available sectors and exceeds the benchmark return.
 - **Liquidity and quality:** close above ₹90, at least 1.5× the 52-week low, 30-day average daily turnover at least ₹7 crore, and market cap above ₹1,000 crore by default.
 - **PEG:** optional; missing PEG values are excluded when the filter is enabled.
-- **Volume expansion:** optional; when enabled, latest day's volume must be at least the chosen percentage (150% by default) of the preceding 30 trading days' average volume, excluding the latest day from the comparison.
+- **Volume confirmation:** optional. Pullback mode can require today's volume to be no more than 70% by default of the preceding 30 trading days' average. Momentum mode can require today's volume to be at least 150% by default. The latest day is excluded from the 30-day comparison.
 - All calculations use daily end-of-day data. Intraday screening and backtesting remain future stages.
 **Data caution:** Yahoo Finance via yfinance is unofficial and may be delayed, incomplete, rate-limited or inaccurate. Market cap, sector and PEG can be missing or stale. Verify candidates with NSE and your broker. This is a research screener, not investment advice.
 """)
