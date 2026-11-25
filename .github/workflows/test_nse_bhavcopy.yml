@@ -1,0 +1,80 @@
+name: Test NSE Full Bhavcopy
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: nse-bhavcopy-test-branch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  test-nse-download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out test branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pandas requests
+
+      - name: Check scanner Python syntax
+        run: python -m py_compile app.py
+      - name: Download and read an actual NSE Full Bhavcopy
+        run: python test_nse_bhavcopy.py
+      - name: Test historical archive coverage
+        run: python test_nse_history_range.py
+      - name: Build two-year NSE history database
+        run: python build_nse_history.py
+      - name: Save database on test branch
+        run: |
+          set -e
+          cp nse_daily_history.csv.gz /tmp/nse_daily_history.csv.gz
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          saved=0
+          for attempt in 1 2 3; do
+            echo "Synchronizing with test branch (attempt $attempt)..."
+            git fetch origin test/nse-bhavcopy-download
+            # The database build modifies a tracked file in the checkout.
+            # Preserve it in /tmp, then discard the workspace copy before switching.
+            git reset --hard origin/test/nse-bhavcopy-download
+            git checkout -B save-nse-database origin/test/nse-bhavcopy-download
+            cp /tmp/nse_daily_history.csv.gz nse_daily_history.csv.gz
+            git add nse_daily_history.csv.gz
+
+            if git diff --cached --quiet; then
+              echo "The same database is already saved on the test branch."
+              saved=1
+              break
+            fi
+
+            git commit -m "Save verified NSE historical database"
+            if git push origin HEAD:test/nse-bhavcopy-download; then
+              saved=1
+              echo "Database successfully saved on test branch."
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$saved" -ne 1 ]; then
+            echo "Could not save database after three synchronization attempts."
+            exit 1
+          fi
+      - name: Save test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-bhavcopy-test-output
+          path: |
+            nse_bhavcopy_test/
+            nse_daily_history.csv.gz
+          if-no-files-found: warn

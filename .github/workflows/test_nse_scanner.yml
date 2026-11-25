@@ -1,0 +1,42 @@
+name: Test NSE scanner filters
+on:
+  push:
+    branches:
+      - "test/nse-bhavcopy-download"
+    paths:
+      - "app.py"
+      - "industry_classification.csv"
+      - "test_industry_classification.py"
+      - "test_nse_scanner.py"
+      - "universe.csv"
+      - "nse_daily_history.csv.gz"
+      - ".github/workflows/test_nse_scanner.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-nse-scanner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out test branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pandas yfinance
+      - name: Check scanner and test syntax
+        run: python -m py_compile app.py test_nse_scanner.py test_industry_classification.py
+      - name: Validate complete sector and industry classification
+        run: python test_industry_classification.py
+      - name: Run scanner filter test using saved NSE database
+        run: python test_nse_scanner.py
+      - name: Upload comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-scanner-filter-test
+          path: nse_scanner_test_report.csv
+          if-no-files-found: error
