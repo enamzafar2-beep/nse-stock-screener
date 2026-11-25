@@ -31,6 +31,7 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
     low_52w = float(low.tail(252).min())
     ret_6m = (last / float(close.iloc[-127]) - 1) * 100
     avg_turnover = float(turnover.tail(30).mean())
+    adr_pct = float((((high.tail(14) - low.tail(14)) / close.tail(14)) * 100).mean())
     prior_vol = float(volume.iloc[-31:-1].mean())
     volume_ratio = float(volume.iloc[-1] / prior_vol * 100) if prior_vol > 0 else 0.0
     ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
@@ -43,14 +44,16 @@ for symbol, g in history.groupby("SYMBOL", sort=False):
     near50 = abs(last / ema50 - 1) * 100 <= 2.0
     holding50 = last >= ema50 * .98
     pullback = swing_advance >= 50 and ema50_rising and (near20 or near50) and holding50
-    common = last > 90 and low_52w > 0 and last / low_52w >= 1.5 and avg_turnover >= 7
+    common_before_adr = last > 90 and low_52w > 0 and last / low_52w >= 1.5 and avg_turnover >= 7
+    common = common_before_adr and adr_pct >= 3.0
     momentum = common and ret_6m >= 50
     pullback_match = common and pullback
     rows.append({
         "Symbol": symbol, "As of": g["DATE"].iloc[-1].date().isoformat(),
         "History sessions": len(g), "Price (₹)": last, "6M return (%)": ret_6m,
         "52-week low (₹)": low_52w, "Price / 52-week low (x)": last / low_52w,
-        "30D avg NSE turnover (₹ Cr)": avg_turnover, "Latest volume": int(volume.iloc[-1]),
+        "30D avg NSE turnover (₹ Cr)": avg_turnover, "ADR% (14 sessions)": adr_pct,
+        "ADR% >= 3%": adr_pct >= 3.0, "Latest volume": int(volume.iloc[-1]),
         "Today's volume vs prior 30D avg (%)": volume_ratio,
         "EMA20 (₹)": ema20, "EMA50 (₹)": ema50,
         "Prior 6M swing advance (%)": swing_advance, "EMA50 rising": ema50_rising,
@@ -73,7 +76,8 @@ print(f"Database date range: {history['DATE'].min().date()} to {history['DATE'].
 print(f"EQ symbols in live universe: {len(eq_symbols):,}")
 print(f"EQ symbols with at least 252 sessions: {len(report):,}")
 print(f"EQ symbols excluded for insufficient history: {short_history:,}")
-print(f"Momentum core matches (before market cap, RS and sector): {int(report['Momentum core filters (pre-mcap/RS/sector)'].sum()):,}")
+print(f"Stocks passing ADR% >= 3%: {int(report['ADR% >= 3%'].sum()):,}")
+print(f"Momentum core matches after ADR (before market cap, RS and sector): {int(report['Momentum core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Momentum + 150% volume: {int(report['Momentum + 150% volume'].sum()):,}")
 print(f"Pullback core matches (before market cap, RS and sector): {int(report['Pullback core filters (pre-mcap/RS/sector)'].sum()):,}")
 print(f"Pullback + 70% volume: {int(report['Pullback + 70% volume'].sum()):,}")
